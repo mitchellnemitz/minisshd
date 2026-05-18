@@ -7,6 +7,7 @@ package server_test
 // real channel/session machinery.
 
 import (
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -53,12 +54,9 @@ func TestIntegration_EnvRequestAcceptedAndRejectedAfterStart(t *testing.T) {
 	}
 }
 
-// TestIntegration_WindowChangeAfterPty drives session.handleWindowChange
-// by sending a window-change request before exec startup (pre-spawn
-// path). The post-spawn path is not tested here because it would race
-// session.runChild's PTY master close — see FINDINGS in the Phase 4
-// report.
-func TestIntegration_WindowChangeAfterPty(t *testing.T) {
+// TestIntegration_WindowChangePreSpawn drives session.handleWindowChange
+// via the pre-spawn path: pty-req, window-change, shell, exit.
+func TestIntegration_WindowChangePreSpawn(t *testing.T) {
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -75,13 +73,74 @@ func TestIntegration_WindowChangeAfterPty(t *testing.T) {
 		t.Fatalf("RequestPty: %v", err)
 	}
 	// Resize BEFORE Start so the request fires while the session is
-	// in the pre-spawn phase — no race with the PTY-close path.
+	// in the pre-spawn phase — pre-spawn handleWindowChange runs under
+	// the same st.mu that handlePtyReq used to allocate the master.
 	if err := sess.WindowChange(40, 120); err != nil {
 		t.Fatalf("WindowChange: %v", err)
 	}
-	// Brief wait to ensure the server handles the request before
-	// teardown closes the channel.
-	time.Sleep(100 * time.Millisecond)
+	// Now drive shell + exit so the post-spawn dispatch still works.
+	stdin, _ := sess.StdinPipe()
+	out := &syncBuffer{}
+	sess.Stdout = out
+	sess.Stderr = out
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	if _, err := io.WriteString(stdin, "echo PRE_OK; exit\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	_ = stdin.Close()
+	_, _ = waitSession(t, sess, 5*time.Second)
+	if !strings.Contains(out.String(), "PRE_OK") {
+		t.Fatalf("expected PRE_OK in shell output; got:\n%s", out.String())
+	}
+}
+
+// TestIntegration_WindowChangePostSpawn drives session.handleWindowChange
+// via the post-spawn path: pty-req, shell, window-change while the shell
+// is running, exit. With commit 3aef20b's mu-serialized Setsize/Close,
+// this is race-clean under -race.
+func TestIntegration_WindowChangePostSpawn(t *testing.T) {
+	ts := startTestServer(t, testServerOptions{})
+	defer ts.cleanup()
+
+	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
+	defer cli.Close()
+
+	sess, err := cli.NewSession()
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	defer sess.Close()
+
+	if err := sess.RequestPty("xterm", 24, 80, ssh.TerminalModes{}); err != nil {
+		t.Fatalf("RequestPty: %v", err)
+	}
+	stdin, _ := sess.StdinPipe()
+	out := &syncBuffer{}
+	sess.Stdout = out
+	sess.Stderr = out
+	if err := sess.Shell(); err != nil {
+		t.Fatalf("Shell: %v", err)
+	}
+	// Now that the child is running, send several window-change
+	// requests to exercise the post-spawn (in-flight) handler under
+	// the shared st.mu critical section that gates ptyMaster.
+	for _, sz := range []struct{ rows, cols int }{
+		{30, 100}, {50, 132}, {24, 80},
+	} {
+		if err := sess.WindowChange(sz.rows, sz.cols); err != nil {
+			t.Fatalf("WindowChange %dx%d: %v", sz.cols, sz.rows, err)
+		}
+	}
+	if _, err := io.WriteString(stdin, "echo POST_OK; exit\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	_ = stdin.Close()
+	_, _ = waitSession(t, sess, 5*time.Second)
+	if !strings.Contains(out.String(), "POST_OK") {
+		t.Fatalf("expected POST_OK in shell output; got:\n%s", out.String())
+	}
 }
 
 // TestIntegration_SignalRequestSilentlyDropped exercises the §8 signal-

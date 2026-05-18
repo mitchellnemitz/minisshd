@@ -68,16 +68,13 @@ func TestIntegration_WrongPasswordLogsBadPassword(t *testing.T) {
 // proves the server enforces a server-side password-attempt cap
 // regardless of how many the client offers. We give the client 10
 // wrong-password attempts via ssh.RetryableAuthMethod and expect the
-// connection to be closed.
+// connection to be closed after exactly 3 failed attempts.
 //
-// Spec §4 mandates "3 real password attempts per connection" and chose
-// `MaxAuthTries = 4` to balance the (then-current) library counting the
-// `none` probe. Current golang.org/x/crypto/ssh exempts the first
-// `none` from the MaxAuthTries counter (see ssh/server.go: "Allow
-// initial attempt of 'none' without penalty."), so with the spec's
-// `MaxAuthTries = 4` the server actually delivers FOUR password
-// attempts before disconnect. The test accepts ≥ 3 and reports the
-// observed count so the spec/impl mismatch is visible.
+// Spec §4 mandates "3 real password attempts per connection". Current
+// golang.org/x/crypto/ssh exempts the first `none` probe from the
+// MaxAuthTries counter (see ssh/server.go: "Allow initial attempt of
+// 'none' without penalty."), so MaxAuthTries=3 delivers exactly three
+// real password attempts before disconnect — see commit 6438db7.
 func TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt(t *testing.T) {
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
@@ -105,18 +102,8 @@ func TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt(t *test
 	}
 
 	got := countLogOccurrences(ts.logBuf, "reason=bad-password")
-	if got < 3 {
-		t.Fatalf("expected ≥ 3 auth-fail bad-password events; got %d; log:\n%s",
-			got, ts.logBuf.String())
-	}
-	if got > 4 {
-		t.Fatalf("expected ≤ 4 auth-fail bad-password events; got %d; log:\n%s",
-			got, ts.logBuf.String())
-	}
 	if got != 3 {
-		t.Logf("NOTE: spec expects 3 password attempts; observed %d. "+
-			"This is the MaxAuthTries=4 + x/crypto/ssh-exempts-none mismatch — "+
-			"see FINDINGS in Phase 4 report.", got)
+		t.Fatalf("want exactly 3 bad-password events; got %d; log:\n%s", got, ts.logBuf.String())
 	}
 	// Sanity: client's error mentions auth.
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "auth") &&

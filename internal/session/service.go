@@ -283,6 +283,9 @@ func (s *Service) handleEnv(req *ssh.Request, st *sessionState) {
 
 // handleWindowChange parses RFC 4254 §6.7 and resizes the PTY if
 // allocated. Per the RFC `want_reply` is false; we still honor it if set.
+//
+// The Setsize call is performed while holding st.mu so it cannot race with
+// the cleanup path in runChild that clears and closes st.ptyMaster.
 func (s *Service) handleWindowChange(req *ssh.Request, st *sessionState) {
 	wc, err := parseWindowChange(req.Payload)
 	if err != nil {
@@ -292,11 +295,10 @@ func (s *Service) handleWindowChange(req *ssh.Request, st *sessionState) {
 		return
 	}
 	st.mu.Lock()
-	master := st.ptyMaster
-	st.mu.Unlock()
-	if master != nil {
-		_ = master.Setsize(wc.Cols, wc.Rows, wc.WidthPx, wc.HeightPx)
+	if st.ptyMaster != nil {
+		_ = st.ptyMaster.Setsize(wc.Cols, wc.Rows, wc.WidthPx, wc.HeightPx)
 	}
+	st.mu.Unlock()
 	if req.WantReply {
 		_ = req.Reply(true, nil)
 	}
@@ -481,12 +483,27 @@ func (s *Service) runChild(
 	// Drain output capped at drainCap.
 	s.drain(remoteAddr, kind, runner.drainDones)
 
+	// Clear st.ptyMaster under the mutex before closing it so an
+	// in-flight handleWindowChange cannot race against Close on the
+	// same *os.File.
+	if runner.master != nil {
+		st.mu.Lock()
+		st.ptyMaster = nil
+		st.mu.Unlock()
+	}
 	for _, c := range runner.closers {
 		_ = c.Close()
 	}
 
 	if !killed {
 		s.sendExit(ch, runner.cmd.ProcessState)
+		// Spec §8.1 step 6 / §8.2 step 5: server initiates the
+		// channel close after sending exit-status/exit-signal.
+		// Real OpenSSH and golang.org/x/crypto/ssh clients do NOT
+		// close the channel themselves after exit; the server-side
+		// close lets the library propagate EOF on reqs and unblocks
+		// the <-chanClosed wait below.
+		_ = ch.Close()
 	}
 	// Wait for chanClosed if not already; drains any leftover requests.
 	<-chanClosed

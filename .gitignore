@@ -1,0 +1,17 @@
+# binaries
+/minissh
+/minissh-test
+
+# Go build/test artifacts
+*.test
+*.cover.out
+/coverage.out
+/coverage/
+/vendor/
+
+# editor/IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store

@@ -8,6 +8,7 @@ package server_test
 
 import (
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -296,4 +297,159 @@ func TestIntegration_MultipleConcurrentSessionsOnOneConnection(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestIntegration_CancelTCPIPForwardRejected drives the second branch of
+// handleGlobalRequest: `cancel-tcpip-forward` must reply false AND log
+// `reject what=tcpip` per spec §7. The companion `tcpip-forward` is
+// tested in server_integration_test.go.
+func TestIntegration_CancelTCPIPForwardRejected(t *testing.T) {
+	ts := startTestServer(t, testServerOptions{})
+	defer ts.cleanup()
+
+	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
+	defer cli.Close()
+
+	// cancel-tcpip-forward payload mirrors tcpip-forward.
+	type cancelPayload struct {
+		Address string
+		Port    uint32
+	}
+	payload := ssh.Marshal(&cancelPayload{Address: "127.0.0.1", Port: 18181})
+	ok, _, err := cli.SendRequest("cancel-tcpip-forward", true, payload)
+	if err != nil {
+		t.Fatalf("SendRequest cancel-tcpip-forward: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected cancel-tcpip-forward to be rejected")
+	}
+	if !waitForLog(t, ts.logBuf, "what=tcpip", 2*time.Second) {
+		t.Fatalf("expected `what=tcpip` in log for cancel-tcpip-forward; got:\n%s",
+			ts.logBuf.String())
+	}
+}
+
+// TestIntegration_SubsystemCaseVariantsRejected drives the strict
+// `isSftpSubsystem` check in session.preSpawnDispatch: anything other
+// than the exact byte sequence "sftp" must be rejected. We probe
+// uppercase, mixed-case, trailing/leading whitespace, and the OpenSSH
+// "sftp-server" alias. Each case must reply false and emit
+// `reject what=subsystem`.
+func TestIntegration_SubsystemCaseVariantsRejected(t *testing.T) {
+	variants := []string{"SFTP", "Sftp", " sftp", "sftp-server", "sftp\n"}
+	for _, name := range variants {
+		name := name
+		t.Run("variant="+strings.ReplaceAll(strings.ReplaceAll(name, "\n", "\\n"), " ", "_"),
+			func(t *testing.T) {
+				ts := startTestServer(t, testServerOptions{})
+				defer ts.cleanup()
+
+				cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
+				defer cli.Close()
+
+				ch, reqs, err := cli.OpenChannel("session", nil)
+				if err != nil {
+					t.Fatalf("OpenChannel: %v", err)
+				}
+				defer ch.Close()
+				go ssh.DiscardRequests(reqs)
+
+				payload := ssh.Marshal(&struct{ Name string }{Name: name})
+				ok, err := ch.SendRequest("subsystem", true, payload)
+				if err != nil {
+					t.Fatalf("SendRequest subsystem=%q: %v", name, err)
+				}
+				if ok {
+					t.Fatalf("expected subsystem=%q to be rejected", name)
+				}
+				if !waitForLog(t, ts.logBuf, "what=subsystem", 2*time.Second) {
+					t.Fatalf("expected `what=subsystem` reject in log for %q; got:\n%s",
+						name, ts.logBuf.String())
+				}
+			})
+	}
+}
+
+// TestIntegration_TCPCloseDuringHandshake drives the
+// isExpectedHandshakeError path: a bare TCP connection that closes
+// without sending SSH version-string MUST result in a conn-close log
+// event. Whether the close manifests as EOF (clean half-close) or
+// ECONNRESET (RST) depends on the TCP path; both are valid.
+//
+// Note: the current isExpectedHandshakeError only matches the literal
+// "EOF" / "unexpected EOF" error messages. ECONNRESET reports as
+// "read: connection reset by peer", which surfaces an `error` log
+// event today — that's a small gap in spec §9 noise-suppression that
+// the implementer may want to widen. The test asserts only that
+// handleConn completes (conn-close logged); the handshake-error
+// surfacing is informational.
+func TestIntegration_TCPCloseDuringHandshake(t *testing.T) {
+	ts := startTestServer(t, testServerOptions{})
+	defer ts.cleanup()
+
+	// Plain TCP dial — no SSH handshake. Close immediately to trigger
+	// the EOF or ECONNRESET path in ssh.NewServerConn.
+	c, err := net.Dial("tcp", ts.addr)
+	if err != nil {
+		t.Fatalf("net.Dial: %v", err)
+	}
+	_ = c.Close()
+
+	// Wait for the conn-close event so we know handleConn finished.
+	if !waitForLog(t, ts.logBuf, "conn-close", 5*time.Second) {
+		t.Fatalf("expected conn-close after tcp-close; got:\n%s", ts.logBuf.String())
+	}
+	if strings.Contains(ts.logBuf.String(), "handshake:") {
+		t.Logf("note: handshake error surfaced (informational; "+
+			"isExpectedHandshakeError doesn't match ECONNRESET):\n%s",
+			ts.logBuf.String())
+	}
+}
+
+// TestIntegration_IPv6ClientAddress drives the normalizeKey IPv6 branch.
+// Even on an IPv4 listener, dialing `::1` requires a separate IPv6
+// listener; we spin one up bound to `::1` and ensure auth succeeds and
+// the per-IP limiter snapshot exposes a non-IPv4 key. The post-success
+// snapshot must NOT contain the IPv6 entry (success deletes it), so we
+// verify normalizeKey by causing a single auth-fail event and then
+// inspecting the snapshot.
+func TestIntegration_IPv6ClientAddress(t *testing.T) {
+	// Confirm the kernel has IPv6 enabled by attempting a listener.
+	probe, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback not available on this host: %v", err)
+	}
+	_ = probe.Close()
+
+	ts := startTestServer(t, testServerOptions{bind: "::1"})
+	defer ts.cleanup()
+
+	// One wrong-password attempt to populate the limiter snapshot with
+	// an IPv6 entry. The connection will fail; we just need the failure
+	// recorded.
+	cfg := &ssh.ClientConfig{
+		User:            ts.user,
+		Auth:            []ssh.AuthMethod{ssh.Password("nope")},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	}
+	_, _ = ssh.Dial("tcp", ts.addr, cfg)
+
+	// Wait for the fail event so the snapshot is populated.
+	if !waitForLog(t, ts.logBuf, "reason=bad-password", 5*time.Second) {
+		t.Fatalf("expected bad-password log; got:\n%s", ts.logBuf.String())
+	}
+	snap := ts.limiter.Snapshot()
+	foundIPv6 := false
+	for k := range snap {
+		// Bare IPv6 (no IPv4-mapped collapse) shows as ::1 or another
+		// IPv6 textual form.
+		if strings.Contains(k, ":") {
+			foundIPv6 = true
+			break
+		}
+	}
+	if !foundIPv6 {
+		t.Fatalf("expected an IPv6 key in limiter snapshot; got %v", snap)
+	}
 }

@@ -1,4 +1,4 @@
-// Package main is the minissh binary entry point. It implements the §2
+// Package main is the minisshd binary entry point. It implements the §2
 // startup sequence — flag parsing, port/shell/bind validation, host key
 // load, listener bind, password-banner emission (only after a successful
 // bind), structured `listening` event, and SIGINT/SIGTERM-driven graceful
@@ -19,12 +19,12 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/mitchellnemitz/minissh/internal/auth"
-	"github.com/mitchellnemitz/minissh/internal/hostkey"
-	"github.com/mitchellnemitz/minissh/internal/logging"
-	"github.com/mitchellnemitz/minissh/internal/ratelimit"
-	"github.com/mitchellnemitz/minissh/internal/server"
-	"github.com/mitchellnemitz/minissh/internal/session"
+	"github.com/mitchellnemitz/minisshd/internal/auth"
+	"github.com/mitchellnemitz/minisshd/internal/hostkey"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/ratelimit"
+	"github.com/mitchellnemitz/minisshd/internal/server"
+	"github.com/mitchellnemitz/minisshd/internal/session"
 )
 
 // Exit codes per spec §11.
@@ -46,15 +46,15 @@ func main() {
 // streams, returning the process exit code. Tests drive it directly with
 // a controllable context and captured stdout/stderr.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("minissh", flag.ContinueOnError)
+	fs := flag.NewFlagSet("minisshd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
 		port      = fs.Int("port", 2222, "TCP port to listen on")
 		bind      = fs.String("bind", "0.0.0.0", "IP address to bind to")
-		passFlag  = fs.String("pass", "", "Password clients must present (overrides MINISSH_PASS)")
-		userFlag  = fs.String("user", "", "Username clients must present (overrides MINISSH_USER)")
+		passFlag  = fs.String("pass", "", "Password clients must present (overrides MINISSHD_PASS)")
+		userFlag  = fs.String("user", "", "Username clients must present (overrides MINISSHD_USER)")
 		shellFlag = fs.String("shell", "", "Shell binary for interactive sessions")
-		hostKey   = fs.String("host-key", "", "Path to the persistent host key (default ~/.minissh/host_key)")
+		hostKey   = fs.String("host-key", "", "Path to the persistent host key (default ~/.minisshd/host_key)")
 	)
 	if err := fs.Parse(args); err != nil {
 		// flag.ContinueOnError already printed the usage to stderr.
@@ -78,21 +78,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	// §2 step 1 — port range.
 	if *port < 0 || *port > 65535 {
-		fmt.Fprintf(stderr, "minissh: --port %d out of range [0, 65535]\n", *port)
+		fmt.Fprintf(stderr, "minisshd: --port %d out of range [0, 65535]\n", *port)
 		return exitBadConfig
 	}
 
 	// §2 step 2 — password.
-	envPass, envPassSet := os.LookupEnv("MINISSH_PASS")
+	envPass, envPassSet := os.LookupEnv("MINISSHD_PASS")
 	password, err := auth.ResolvePasswordStrict(*passFlag, passSet, envPass, envPassSet)
 	if err != nil {
-		fmt.Fprintf(stderr, "minissh: %v\n", err)
+		fmt.Fprintf(stderr, "minisshd: %v\n", err)
 		return exitBadConfig
 	}
 	generatePasswordAtStartup := password == ""
 
 	// §2 step 3 — username.
-	envUser := os.Getenv("MINISSH_USER")
+	envUser := os.Getenv("MINISSHD_USER")
 	osUser := ""
 	if u, err := user.Current(); err == nil {
 		osUser = u.Username
@@ -101,7 +101,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	username, err := auth.ResolveUsername(*userFlag, envUser, osUser)
 	if err != nil {
-		fmt.Fprintf(stderr, "minissh: %v\n", err)
+		fmt.Fprintf(stderr, "minisshd: %v\n", err)
 		return exitBadConfig
 	}
 	_ = userSet // accepted-but-unused; presence is implied by username != ""
@@ -115,22 +115,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if err := validateShell(shellPath); err != nil {
-		fmt.Fprintf(stderr, "minissh: %v\n", err)
+		fmt.Fprintf(stderr, "minisshd: %v\n", err)
 		return exitBadConfig
 	}
 
-	// §2 step 5 — ensure ~/.minissh/ exists with mode 0700 (only on the
+	// §2 step 5 — ensure ~/.minisshd/ exists with mode 0700 (only on the
 	// default --host-key path; per §6 the binary never auto-creates a
 	// caller-supplied --host-key parent).
 	if !hostKeySet {
 		hd, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintf(stderr, "minissh: cannot resolve home directory: %v\n", err)
+			fmt.Fprintf(stderr, "minisshd: cannot resolve home directory: %v\n", err)
 			return exitFSFailure
 		}
-		*hostKey = filepath.Join(hd, ".minissh", "host_key")
-		if err := ensureMinisshDir(filepath.Dir(*hostKey)); err != nil {
-			fmt.Fprintf(stderr, "minissh: %v\n", err)
+		*hostKey = filepath.Join(hd, ".minisshd", "host_key")
+		if err := ensureMinisshdDir(filepath.Dir(*hostKey)); err != nil {
+			fmt.Fprintf(stderr, "minisshd: %v\n", err)
 			return exitFSFailure
 		}
 	}
@@ -140,13 +140,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		switch {
 		case errors.Is(err, hostkey.ErrKeyPermissionsTooOpen):
-			fmt.Fprintf(stderr, "minissh: host key %q has too-open permissions; run: chmod 600 %q\n", *hostKey, *hostKey)
+			fmt.Fprintf(stderr, "minisshd: host key %q has too-open permissions; run: chmod 600 %q\n", *hostKey, *hostKey)
 		case errors.Is(err, hostkey.ErrKeyCorrupt):
-			fmt.Fprintf(stderr, "minissh: host key %q is corrupt; delete it to regenerate (this changes the host fingerprint)\n", *hostKey)
+			fmt.Fprintf(stderr, "minisshd: host key %q is corrupt; delete it to regenerate (this changes the host fingerprint)\n", *hostKey)
 		case errors.Is(err, hostkey.ErrParentMissing):
-			fmt.Fprintf(stderr, "minissh: %v\n", err)
+			fmt.Fprintf(stderr, "minisshd: %v\n", err)
 		default:
-			fmt.Fprintf(stderr, "minissh: %v\n", err)
+			fmt.Fprintf(stderr, "minisshd: %v\n", err)
 		}
 		return exitFSFailure
 	}
@@ -155,7 +155,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// §2 step 7 — parse --bind and bind the listener.
 	bindIP := net.ParseIP(*bind)
 	if bindIP == nil {
-		fmt.Fprintf(stderr, "minissh: --bind %q is not a valid IP literal\n", *bind)
+		fmt.Fprintf(stderr, "minisshd: --bind %q is not a valid IP literal\n", *bind)
 		return exitBadConfig
 	}
 	addr := net.JoinHostPort(bindIP.String(), strconv.Itoa(*port))
@@ -163,11 +163,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		switch {
 		case errors.Is(err, syscall.EADDRINUSE):
-			fmt.Fprintf(stderr, "minissh: address %s already in use\n", addr)
+			fmt.Fprintf(stderr, "minisshd: address %s already in use\n", addr)
 		case errors.Is(err, syscall.EADDRNOTAVAIL):
-			fmt.Fprintf(stderr, "minissh: bind address %s is not assigned to any local interface\n", bindIP)
+			fmt.Fprintf(stderr, "minisshd: bind address %s is not assigned to any local interface\n", bindIP)
 		default:
-			fmt.Fprintf(stderr, "minissh: bind %s: %v\n", addr, err)
+			fmt.Fprintf(stderr, "minisshd: bind %s: %v\n", addr, err)
 		}
 		return exitBindFailure
 	}
@@ -179,7 +179,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if generatePasswordAtStartup {
 		password, err = auth.GeneratePassword()
 		if err != nil {
-			fmt.Fprintf(stderr, "minissh: generate password: %v\n", err)
+			fmt.Fprintf(stderr, "minisshd: generate password: %v\n", err)
 			return exitInternalError
 		}
 		fmt.Fprintf(stdout, "Password: %s\n", password)
@@ -240,10 +240,10 @@ func validateShell(path string) error {
 	return nil
 }
 
-// ensureMinisshDir implements §2 step 5: create the directory at mode
+// ensureMinisshdDir implements §2 step 5: create the directory at mode
 // 0700 if missing, or verify the existing directory is no wider than
 // 0700 (otherwise §11 says exit 4 with a chmod 700 instruction).
-func ensureMinisshDir(path string) error {
+func ensureMinisshdDir(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {

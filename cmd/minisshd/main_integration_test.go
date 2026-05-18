@@ -1,6 +1,6 @@
 package main
 
-// Integration tests for the cmd/minissh run() function. Owned by
+// Integration tests for the cmd/minisshd run() function. Owned by
 // test-impl (per the *_integration_test.go suffix). These tests cover
 // run() paths that the package-local unit tests don't reach.
 
@@ -111,17 +111,17 @@ func TestIntegration_RunHostKeyParentMissingExits4(t *testing.T) {
 	}
 }
 
-// TestIntegration_EnsureMinisshDirIsFile drives the `info.IsDir() ==
-// false` branch of ensureMinisshDir: the path exists but is a regular
+// TestIntegration_EnsureMinisshdDirIsFile drives the `info.IsDir() ==
+// false` branch of ensureMinisshdDir: the path exists but is a regular
 // file, not a directory. Expected: a non-nil error mentioning "not a
 // directory".
-func TestIntegration_EnsureMinisshDirIsFile(t *testing.T) {
+func TestIntegration_EnsureMinisshdDirIsFile(t *testing.T) {
 	dir := t.TempDir()
-	notDir := filepath.Join(dir, "minissh-as-file")
+	notDir := filepath.Join(dir, "minisshd-as-file")
 	if err := os.WriteFile(notDir, []byte("file content\n"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
-	err := ensureMinisshDir(notDir)
+	err := ensureMinisshdDir(notDir)
 	if err == nil {
 		t.Fatalf("expected error for non-directory path; got nil")
 	}

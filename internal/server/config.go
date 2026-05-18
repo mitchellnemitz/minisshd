@@ -6,10 +6,10 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mitchellnemitz/minissh/internal/auth"
-	"github.com/mitchellnemitz/minissh/internal/logging"
-	"github.com/mitchellnemitz/minissh/internal/ratelimit"
-	"github.com/mitchellnemitz/minissh/internal/session"
+	"github.com/mitchellnemitz/minisshd/internal/auth"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/ratelimit"
+	"github.com/mitchellnemitz/minisshd/internal/session"
 )
 
 // sessionHandler is the boundary between the server (this package,
@@ -42,7 +42,7 @@ var _ sessionHandler = (*session.Service)(nil)
 
 // ServerVersion is the SSH identification string we announce in the
 // public handshake. RFC 4253 §4.2 requires the "SSH-2.0-" prefix.
-const ServerVersion = "SSH-2.0-minissh"
+const ServerVersion = "SSH-2.0-minisshd"
 
 // MaxAuthTries is the value set on ssh.ServerConfig.MaxAuthTries.
 //
@@ -61,13 +61,13 @@ const ServerVersion = "SSH-2.0-minissh"
 // value. The §13.3 integration test asserts the count is exactly 3.
 const MaxAuthTries = 3
 
-// Config bundles the wiring inputs the server needs. cmd/minissh
+// Config bundles the wiring inputs the server needs. cmd/minisshd
 // constructs this with a bound listener, a loaded host key, the auth
 // credentials, the per-IP rate limiter, the session service, and a
 // shared logger. None of the fields may be nil — the constructor relies
 // on every dependency being present.
 type Config struct {
-	// Listener is the already-bound listening socket. cmd/minissh owns
+	// Listener is the already-bound listening socket. cmd/minisshd owns
 	// listener creation (binding, IPV6_V6ONLY=0, etc.); the server only
 	// runs the accept loop on it and closes it during shutdown.
 	Listener net.Listener
@@ -79,7 +79,7 @@ type Config struct {
 	// Limiter is the per-IP exponential-backoff state machine.
 	Limiter *ratelimit.Limiter
 	// SessionService routes accepted "session" channels to the §8
-	// PTY/exec/SFTP machinery. cmd/minissh passes the concrete
+	// PTY/exec/SFTP machinery. cmd/minisshd passes the concrete
 	// *session.Service here.
 	SessionService *session.Service
 	// Log is the structured logger.

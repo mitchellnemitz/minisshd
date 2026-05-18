@@ -2,5 +2,5 @@
 // spec §13.5 coverage threshold.
 package version
 
-// Version is the human-readable release identifier for the minissh binary.
+// Version is the human-readable release identifier for the minisshd binary.
 const Version = "0.1.0-dev"

@@ -1,16 +1,16 @@
-# minissh
+# minisshd
 
 A minimal, single-user SSH server for macOS. Listens on a TCP port, authenticates one user with a password (auto-generated 6-digit if none is configured), and supports interactive shell, one-off `exec`, and SFTP — enough for the system `ssh`, `sftp`, and `scp` clients to work unmodified.
 
-The full contract lives in [`minissh-spec.md`](./minissh-spec.md). **This server is not meant to face the public internet.** No code-level check enforces that — it's the operator's responsibility.
+The full contract lives in [`minisshd-spec.md`](./minisshd-spec.md). **This server is not meant to face the public internet.** No code-level check enforces that — it's the operator's responsibility.
 
 ## Usage
 
 ```
-minissh [--port N] [--bind IP] [--pass XXXXXX] [--user NAME] [--shell PATH] [--host-key PATH]
+minisshd [--port N] [--bind IP] [--pass XXXXXX] [--user NAME] [--shell PATH] [--host-key PATH]
 ```
 
-`MINISSH_PASS` and `MINISSH_USER` environment variables are honored when the matching flags are unset. If no password is configured, a fresh 6-digit numeric password is generated on startup and printed once to stdout — only after the listener has successfully bound.
+`MINISSHD_PASS` and `MINISSHD_USER` environment variables are honored when the matching flags are unset. If no password is configured, a fresh 6-digit numeric password is generated on startup and printed once to stdout — only after the listener has successfully bound.
 
 ## Build and test
 

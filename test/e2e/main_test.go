@@ -13,10 +13,10 @@ import (
 	"testing"
 )
 
-// minisshBin is the absolute path to the test binary, set by TestMain
-// after `go build -cover -o $TMPDIR/minissh-test ./cmd/minissh` succeeds.
+// minisshdBin is the absolute path to the test binary, set by TestMain
+// after `go build -cover -o $TMPDIR/minisshd-test ./cmd/minisshd` succeeds.
 // All §13.4 cases reference this via `spawnServer`.
-var minisshBin string
+var minisshdBin string
 
 // coverDir is the per-process GOCOVERDIR for the spawned binary. Each
 // test gets a sub-directory so the merged covdata directory keeps the
@@ -29,13 +29,13 @@ var coverDir string
 func TestMain(m *testing.M) {
 	flag.Parse()
 
-	tmpdir, err := os.MkdirTemp("", "minissh-e2e-*")
+	tmpdir, err := os.MkdirTemp("", "minisshd-e2e-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir tempdir: %v\n", err)
 		os.Exit(2)
 	}
 
-	bin := filepath.Join(tmpdir, "minissh-test")
+	bin := filepath.Join(tmpdir, "minisshd-test")
 	// Honor the Makefile-supplied GOCOVERDIR so spawned-binary coverage
 	// merges with the outer unit/integration profile. Fall back to a
 	// per-suite temp dir when no caller set GOCOVERDIR (e.g. ad-hoc
@@ -56,9 +56,9 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	cmd := exec.Command("go", "build", "-cover",
-		"-coverpkg=github.com/mitchellnemitz/minissh/cmd/...,github.com/mitchellnemitz/minissh/internal/...",
+		"-coverpkg=github.com/mitchellnemitz/minisshd/cmd/...,github.com/mitchellnemitz/minisshd/internal/...",
 		"-o", bin,
-		"./cmd/minissh")
+		"./cmd/minisshd")
 	cmd.Dir = repoRoot
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -67,8 +67,8 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 
-	minisshBin = bin
-	_ = os.Setenv("MINISSH_BIN", bin)
+	minisshdBin = bin
+	_ = os.Setenv("MINISSHD_BIN", bin)
 
 	code := m.Run()
 
@@ -115,15 +115,15 @@ func requireSSHClients(t *testing.T) {
 	}
 }
 
-// requireBin is a helper for tests that assume minisshBin is set; if
+// requireBin is a helper for tests that assume minisshdBin is set; if
 // TestMain build failed it would have called os.Exit(2) already, but
 // belt-and-braces.
 func requireBin(t *testing.T) string {
 	t.Helper()
-	if minisshBin == "" {
+	if minisshdBin == "" {
 		t.Skip("test binary not built")
 	}
-	return minisshBin
+	return minisshdBin
 }
 
 // joinArgs returns args quoted for human-readable error messages.

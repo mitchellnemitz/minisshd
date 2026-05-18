@@ -14,15 +14,15 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Sentinel errors. cmd/minissh maps these to exit codes via errors.Is.
+// Sentinel errors. cmd/minisshd maps these to exit codes via errors.Is.
 var (
 	// ErrParentMissing is returned when the parent directory of the key
-	// path does not exist. cmd/minissh maps this to exit 4. The host key
+	// path does not exist. cmd/minisshd maps this to exit 4. The host key
 	// loader never auto-creates non-default parent directories (§6).
 	ErrParentMissing = errors.New("host key parent directory missing")
 
 	// ErrKeyPermissionsTooOpen is returned when the private key file has
-	// any bits set beyond 0600. cmd/minissh maps this to exit 4 with a
+	// any bits set beyond 0600. cmd/minisshd maps this to exit 4 with a
 	// `chmod 600` message (§6).
 	ErrKeyPermissionsTooOpen = errors.New("host key permissions too open")
 

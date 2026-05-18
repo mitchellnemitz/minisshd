@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitchellnemitz/minissh/internal/auth"
-	"github.com/mitchellnemitz/minissh/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/auth"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
 )
 
 // fakeConnMetadata is a minimal ssh.ConnMetadata for password-callback

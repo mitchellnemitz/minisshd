@@ -51,16 +51,16 @@ func unsetenv(t *testing.T, key string) {
 	})
 }
 
-// isolateHome points $HOME at a fresh tempdir and clears MINISSH_PASS /
-// MINISSH_USER so tests don't pick up the host environment. Returns the
-// new HOME path. The default --host-key lives at $HOME/.minissh/host_key
+// isolateHome points $HOME at a fresh tempdir and clears MINISSHD_PASS /
+// MINISSHD_USER so tests don't pick up the host environment. Returns the
+// new HOME path. The default --host-key lives at $HOME/.minisshd/host_key
 // after this runs.
 func isolateHome(t *testing.T) string {
 	t.Helper()
 	h := t.TempDir()
 	t.Setenv("HOME", h)
-	unsetenv(t, "MINISSH_PASS")
-	unsetenv(t, "MINISSH_USER")
+	unsetenv(t, "MINISSHD_PASS")
+	unsetenv(t, "MINISSHD_USER")
 	return h
 }
 
@@ -304,9 +304,9 @@ func TestRun_BindIPv6LoopbackOK(t *testing.T) {
 	}
 }
 
-func TestRun_MinisshDirTooOpen(t *testing.T) {
+func TestRun_MinisshdDirTooOpen(t *testing.T) {
 	home := isolateHome(t)
-	dir := filepath.Join(home, ".minissh")
+	dir := filepath.Join(home, ".minisshd")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -323,9 +323,9 @@ func TestRun_MinisshDirTooOpen(t *testing.T) {
 	}
 }
 
-func TestRun_MinisshDirCorrectModeAccepted(t *testing.T) {
+func TestRun_MinisshdDirCorrectModeAccepted(t *testing.T) {
 	home := isolateHome(t)
-	dir := filepath.Join(home, ".minissh")
+	dir := filepath.Join(home, ".minisshd")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestRun_BannerSuppressedWithFlagPass(t *testing.T) {
 
 func TestRun_BannerSuppressedWithEnvPass(t *testing.T) {
 	isolateHome(t)
-	t.Setenv("MINISSH_PASS", "from-env")
+	t.Setenv("MINISSHD_PASS", "from-env")
 	// Remove --pass from args.
 	args := []string{
 		"--port", "0",
@@ -372,7 +372,7 @@ func TestRun_BannerSuppressedWithEnvPass(t *testing.T) {
 		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitOK, stderr)
 	}
 	if strings.Contains(stdout, "Password:") {
-		t.Errorf("stdout should not contain a Password: banner when MINISSH_PASS is set; got %q", stdout)
+		t.Errorf("stdout should not contain a Password: banner when MINISSHD_PASS is set; got %q", stdout)
 	}
 }
 
@@ -450,7 +450,7 @@ func TestRun_HostKeyPersistedAcrossInvocations(t *testing.T) {
 	if rc != exitOK {
 		t.Fatalf("first invocation rc=%d want %d", rc, exitOK)
 	}
-	keyPath := filepath.Join(home, ".minissh", "host_key")
+	keyPath := filepath.Join(home, ".minisshd", "host_key")
 	first, err := os.ReadFile(keyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -518,14 +518,14 @@ func TestRun_ValidateShellHelper(t *testing.T) {
 	}
 }
 
-// TestRun_EnsureMinisshDirHelper covers ensureMinisshDir's create-or-check
+// TestRun_EnsureMinisshdDirHelper covers ensureMinisshdDir's create-or-check
 // behavior in isolation.
-func TestRun_EnsureMinisshDirHelper(t *testing.T) {
+func TestRun_EnsureMinisshdDirHelper(t *testing.T) {
 	root := t.TempDir()
 
 	// Missing directory: create at 0700.
 	d1 := filepath.Join(root, "a")
-	if err := ensureMinisshDir(d1); err != nil {
+	if err := ensureMinisshdDir(d1); err != nil {
 		t.Fatalf("create missing dir: %v", err)
 	}
 	info, err := os.Stat(d1)
@@ -537,7 +537,7 @@ func TestRun_EnsureMinisshDirHelper(t *testing.T) {
 	}
 
 	// Pre-existing 0700: accept.
-	if err := ensureMinisshDir(d1); err != nil {
+	if err := ensureMinisshdDir(d1); err != nil {
 		t.Errorf("accept-existing 0700 dir: %v", err)
 	}
 
@@ -549,7 +549,7 @@ func TestRun_EnsureMinisshDirHelper(t *testing.T) {
 	if err := os.Chmod(d2, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err = ensureMinisshDir(d2)
+	err = ensureMinisshdDir(d2)
 	if err == nil {
 		t.Fatal("0755 dir should be rejected")
 	}
@@ -562,16 +562,16 @@ func TestRun_EnsureMinisshDirHelper(t *testing.T) {
 	if err := os.WriteFile(d3, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureMinisshDir(d3); err == nil {
+	if err := ensureMinisshdDir(d3); err == nil {
 		t.Error("file-not-dir should be rejected")
 	}
 }
 
 // TestRun_HostKeyCorruptExits4 exercises the §13.2 hostkey-corruption
-// surface — cmd/minissh maps hostkey.ErrKeyCorrupt to exit code 4.
+// surface — cmd/minisshd maps hostkey.ErrKeyCorrupt to exit code 4.
 func TestRun_HostKeyCorruptExits4(t *testing.T) {
 	home := isolateHome(t)
-	dir := filepath.Join(home, ".minissh")
+	dir := filepath.Join(home, ".minisshd")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestRun_HostKeyCorruptExits4(t *testing.T) {
 // world-readable" case.
 func TestRun_HostKeyTooOpenPermissionsExits4(t *testing.T) {
 	home := isolateHome(t)
-	dir := filepath.Join(home, ".minissh")
+	dir := filepath.Join(home, ".minisshd")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

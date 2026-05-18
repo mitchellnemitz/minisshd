@@ -14,7 +14,7 @@ var ErrEmptyUsername = errors.New("username must not be empty")
 
 // ResolvePassword implements spec §2 step 2.
 //
-// Precedence: --pass (flagPass) > $MINISSH_PASS (envPass). A flag or env
+// Precedence: --pass (flagPass) > $MINISSHD_PASS (envPass). A flag or env
 // value that is the empty string is treated as "supplied but empty" and
 // returns ErrEmptyPassword — the caller must not auto-generate. If neither
 // the flag nor the env var is set the function returns ("", nil) and the
@@ -42,7 +42,7 @@ func ResolvePassword(flagPass, envPass string) (string, error) {
 
 // ResolvePasswordStrict is like ResolvePassword but distinguishes "flag
 // supplied as empty string" from "flag not supplied" via explicit boolean
-// presence flags. The cmd/minissh layer uses this when it wants to reject
+// presence flags. The cmd/minisshd layer uses this when it wants to reject
 // `--pass=""` per spec §2 step 2.
 func ResolvePasswordStrict(flagPass string, flagSet bool, envPass string, envSet bool) (string, error) {
 	if flagSet {
@@ -62,7 +62,7 @@ func ResolvePasswordStrict(flagPass string, flagSet bool, envPass string, envSet
 
 // ResolveUsername implements spec §2 step 3.
 //
-// Precedence: --user (flagUser) > $MINISSH_USER (envUser) > osUser. An
+// Precedence: --user (flagUser) > $MINISSHD_USER (envUser) > osUser. An
 // empty resolved username is an error. The caller is expected to pass the
 // OS user (e.g. $USER, or getpwuid(getuid()).Username) as the third
 // argument; an empty osUser combined with empty flag and env values yields

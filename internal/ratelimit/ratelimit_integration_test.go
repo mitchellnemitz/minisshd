@@ -122,7 +122,7 @@ func TestIntegration_IPv4MappedIPv6NormalizationSharesCounter(t *testing.T) {
 	if !ipv6Available(t) {
 		t.Skip("IPv6 dual-stack unavailable")
 	}
-	// Bind to ::; the listen helper in cmd/minissh sets IPV6_V6ONLY=0, but
+	// Bind to ::; the listen helper in cmd/minisshd sets IPV6_V6ONLY=0, but
 	// in this in-process harness we use net.Listen which defaults to dual-
 	// stack on Linux unless /proc/sys/net/ipv6/bindv6only says otherwise.
 	ts := startTestServer(t, testServerOptions{bind: "::"})

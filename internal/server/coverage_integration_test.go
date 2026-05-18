@@ -733,7 +733,7 @@ func TestIntegration_SecondShellRejectedDuringExec(t *testing.T) {
 // channel. We provoke the failure by pointing the configured shell at
 // /does/not/exist — exec.Cmd.Start returns ENOENT.
 func TestIntegration_ExecChildStartFails(t *testing.T) {
-	ts := startTestServer(t, testServerOptions{shell: "/does/not/exist/minissh-no-such-shell"})
+	ts := startTestServer(t, testServerOptions{shell: "/does/not/exist/minisshd-no-such-shell"})
 	defer ts.cleanup()
 
 	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))

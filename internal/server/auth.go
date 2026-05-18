@@ -7,9 +7,9 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mitchellnemitz/minissh/internal/auth"
-	"github.com/mitchellnemitz/minissh/internal/logging"
-	"github.com/mitchellnemitz/minissh/internal/ratelimit"
+	"github.com/mitchellnemitz/minisshd/internal/auth"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/ratelimit"
 )
 
 // rateLimiter is the narrow surface the password callback consumes from

@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mitchellnemitz/minissh/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )

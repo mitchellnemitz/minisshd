@@ -1,4 +1,4 @@
-module github.com/mitchellnemitz/minissh
+module github.com/mitchellnemitz/minisshd
 
 go 1.25.0
 

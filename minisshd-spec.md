@@ -1,4 +1,4 @@
-# minissh — Spec
+# minisshd — Spec
 
 A minimal, single-user SSH server for macOS. Runs as the invoking user, authenticates clients with a username and password (a random 6-digit password is generated if none is supplied), and supports interactive shell, one-off command execution, and SFTP file transfer over the standard SSH protocol so the system `ssh` and `sftp` clients work unmodified.
 
@@ -19,10 +19,10 @@ Python (`asyncssh`) is a viable alternative if Go is unavailable, but the spec b
 
 ## 2. Command-line interface
 
-Binary name: `minissh`
+Binary name: `minisshd`
 
 ```
-minissh [flags]
+minisshd [flags]
 ```
 
 ### Flags
@@ -31,27 +31,27 @@ minissh [flags]
 |---|---|---|
 | `--port N` | `2222` | TCP port to listen on. |
 | `--bind IP` | `0.0.0.0` | IP address to bind the listener to. Use `127.0.0.1` for loopback only, a specific LAN address to restrict to one interface, `::` for all IPv6 interfaces, etc. Both IPv4 and IPv6 literals are accepted. |
-| `--pass XXXXXX` | random 6-digit | Password clients must present. Any non-empty string accepted as an SSH password is valid. Overrides `MINISSH_PASS` if both are set. If neither is set, a random 6-digit numeric password is generated and printed at startup. |
-| `--user NAME` | current OS user | Username clients must present. Overrides `MINISSH_USER` if both are set. |
+| `--pass XXXXXX` | random 6-digit | Password clients must present. Any non-empty string accepted as an SSH password is valid. Overrides `MINISSHD_PASS` if both are set. If neither is set, a random 6-digit numeric password is generated and printed at startup. |
+| `--user NAME` | current OS user | Username clients must present. Overrides `MINISSHD_USER` if both are set. |
 | `--shell PATH` | `$SHELL` | Shell binary for interactive sessions. Falls back to `/bin/zsh` if `$SHELL` is unset. |
-| `--host-key PATH` | `~/.minissh/host_key` | Path to the persistent host key. Generated on first run if missing. |
+| `--host-key PATH` | `~/.minisshd/host_key` | Path to the persistent host key. Generated on first run if missing. |
 
 ### Environment variables
 
 | Var | Purpose |
 |---|---|
-| `MINISSH_PASS` | Password value. Used only if `--pass` is not provided. Preferred over `--pass` because command-line arguments are visible to any local user via `ps`; environment variables are less exposed (not visible in default `ps` output on macOS). |
-| `MINISSH_USER` | Expected username. Used only if `--user` is not provided. |
+| `MINISSHD_PASS` | Password value. Used only if `--pass` is not provided. Preferred over `--pass` because command-line arguments are visible to any local user via `ps`; environment variables are less exposed (not visible in default `ps` output on macOS). |
+| `MINISSHD_USER` | Expected username. Used only if `--user` is not provided. |
 
 ### Startup validation
 
 On startup the server must:
 
 1. Validate `--port`: must be an integer in `[0, 65535]`. The value `0` is permitted and means "ask the kernel for an ephemeral port" — used by tests. Otherwise fail with exit code 2.
-2. Resolve the user-supplied password: `--pass` if set, else `$MINISSH_PASS`, else mark for generation in step 8. If a user-supplied value is the empty string, fail with exit code 2.
-3. Resolve the expected username: `--user` if set, else `$MINISSH_USER`, else the OS username of the process owner (`$USER`, falling back to `getpwuid(getuid())`). Must be non-empty; otherwise fail with exit code 2.
+2. Resolve the user-supplied password: `--pass` if set, else `$MINISSHD_PASS`, else mark for generation in step 8. If a user-supplied value is the empty string, fail with exit code 2.
+3. Resolve the expected username: `--user` if set, else `$MINISSHD_USER`, else the OS username of the process owner (`$USER`, falling back to `getpwuid(getuid())`). Must be non-empty; otherwise fail with exit code 2.
 4. Validate `--shell`: resolve the path with `stat` (following symlinks) and verify the final target exists, is a regular file, and is executable by the current user. A broken symlink, a directory, or a non-executable target all exit with code 2 and a message naming the resolved path that failed.
-5. Ensure `~/.minissh/` exists with mode `0700`. If it exists with a wider mode, refuse to start with exit code 4 and instruct `chmod 700`.
+5. Ensure `~/.minisshd/` exists with mode `0700`. If it exists with a wider mode, refuse to start with exit code 4 and instruct `chmod 700`.
 6. Load or generate the host key (see §6).
 7. Parse `--bind` as a textual IP literal (`net.ParseIP` in Go); fail with exit code 2 if invalid. Bind to `<bind>:<port>` — formatted as `bind:port` for IPv4 and `[bind]:port` for IPv6. On `EADDRINUSE` fail with exit code 3 and a clear message. On `EADDRNOTAVAIL` (the address isn't assigned to any local interface) fail with exit code 3 and a clear message naming the address.
 8. **Only after the listener is successfully bound**, if no password was resolved in step 2, generate a fresh 6-digit numeric password using a cryptographically secure RNG (`crypto/rand` in Go) and print exactly one line to stdout: `Password: 482910`. This is the only path that writes the password to stdout. If a password was supplied via flag or env, no banner is printed.
@@ -81,7 +81,7 @@ The server must guarantee **3 real password attempts per connection** before dis
 
 To prevent timing attacks that distinguish wrong-user from wrong-password (or reveal the configured password length), the check must:
 
-1. Compute SHA-256 over the presented username and over the presented password. The implementation pre-computes and caches SHA-256 of the resolved configured username and password after the password is finalized (per §2 step 2 if supplied via `--pass` or `MINISSH_PASS`, or §2 step 8 if auto-generated) and before the listener accepts its first connection, so every auth callback compares against cached digests. SHA-256 over arbitrary-length input always produces 32 bytes, so equal-length comparison is guaranteed.
+1. Compute SHA-256 over the presented username and over the presented password. The implementation pre-computes and caches SHA-256 of the resolved configured username and password after the password is finalized (per §2 step 2 if supplied via `--pass` or `MINISSHD_PASS`, or §2 step 8 if auto-generated) and before the listener accepts its first connection, so every auth callback compares against cached digests. SHA-256 over arbitrary-length input always produces 32 bytes, so equal-length comparison is guaranteed.
 2. Compare each presented hash to the configured hash with `subtle.ConstantTimeCompare`. **Both comparisons must always run** — do not short-circuit on the first mismatch. Use `subtle.ConstantTimeSelect` or two boolean ANDs to combine the results without branching.
 3. Decide the result:
    - both match → `(ok=true, reason="")`
@@ -150,8 +150,8 @@ When an auth attempt arrives, the server checks that IP's entry; if `now - last_
 ## 6. Host key
 
 - **Type:** Ed25519.
-- **Path:** `~/.minissh/host_key` by default, overridable with `--host-key`. The public key is always written alongside as `<host_key>.pub` (mode `0644`) for the user's convenience.
-- **Parent directory:** the parent of `--host-key` must exist and be writable by the current user at startup. If it does not exist, the binary refuses to start with exit code 4 and a message naming the missing directory. The binary does not auto-create non-default parent directories — the default `~/.minissh/` is the one exception (§2 step 5 creates it).
+- **Path:** `~/.minisshd/host_key` by default, overridable with `--host-key`. The public key is always written alongside as `<host_key>.pub` (mode `0644`) for the user's convenience.
+- **Parent directory:** the parent of `--host-key` must exist and be writable by the current user at startup. If it does not exist, the binary refuses to start with exit code 4 and a message naming the missing directory. The binary does not auto-create non-default parent directories — the default `~/.minisshd/` is the one exception (§2 step 5 creates it).
 - **Generation:** if the private key file is missing on startup, generate a new Ed25519 key, write the private key in OpenSSH private-key format with `chmod 0600`, and write the public key in OpenSSH `authorized_keys` format with `chmod 0644`.
 - **`.pub` regeneration:** the public key is always re-derived from the private key at startup and written. Both when generating a new private key, and when the private key already exists but `<host_key>.pub` is missing or stale — the implementation derives the public key from the private key and writes it, overwriting any existing `.pub` file. This is safe because the public key is fully derivable; nothing important can be lost by overwriting.
 - **Permissions check:** if the private key file exists with mode wider than `0600`, refuse to start and print a message instructing the user to `chmod 600`.
@@ -292,14 +292,14 @@ Logs go to **stdout**, line-buffered. Format: one event per line, RFC3339 timest
 
 The password must **never** appear in any structured log event, including at startup or in errors. The single exception is the `Password: XXXXXX` banner line printed to stdout when the password is auto-generated (see §2 step 8); this is a one-shot user-facing notice, not a structured log entry.
 
-If the user wants log persistence, the safe approach is to redirect *only* when the password was provided externally (so no banner is ever printed): `MINISSH_PASS=hunter2 minissh > minissh.log 2>&1`. Redirecting an auto-generated invocation captures the password in the file — never do that for shared or persisted logs.
+If the user wants log persistence, the safe approach is to redirect *only* when the password was provided externally (so no banner is ever printed): `MINISSHD_PASS=hunter2 minisshd > minisshd.log 2>&1`. Redirecting an auto-generated invocation captures the password in the file — never do that for shared or persisted logs.
 
 ---
 
 ## 10. File layout
 
 ```
-~/.minissh/
+~/.minisshd/
 ├── host_key          # 0600  Ed25519 private key
 └── host_key.pub      # 0644  public key (written alongside, for the user's reference)
 ```
@@ -316,13 +316,13 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 |---|---|
 | `--port` outside `[0, 65535]` | Exit 2, message to stderr naming the rejected value. |
 | `--shell` path is missing, not a regular file, or not executable | Exit 2, message to stderr. |
-| `~/.minissh/` exists with mode wider than `0700` | Exit 4, instruct `chmod 700`. |
+| `~/.minisshd/` exists with mode wider than `0700` | Exit 4, instruct `chmod 700`. |
 | Password provided but empty | Exit 2, message to stderr. |
 | `--bind` value is not a valid IP literal | Exit 2, message to stderr naming the rejected value. |
 | `--bind` address is not assigned to a local interface | Exit 3, message to stderr (`EADDRNOTAVAIL`). |
 | Port already in use | Exit 3, message to stderr. |
-| `~/.minissh/host_key` is world-readable | Exit 4, instruct `chmod 600`. |
-| `~/.minissh/host_key` exists but is unparseable (corrupt) | Exit 4, message naming the unreadable path. Does not silently regenerate. |
+| `~/.minisshd/host_key` is world-readable | Exit 4, instruct `chmod 600`. |
+| `~/.minisshd/host_key` exists but is unparseable (corrupt) | Exit 4, message naming the unreadable path. Does not silently regenerate. |
 | `--host-key` parent directory missing or not writable | Exit 4, message naming the missing/unwritable directory. |
 | Client requests unsupported channel/subsystem | Reject the request, log `reject`, keep the connection open. |
 | Client offers a non-password auth method | Server advertises only `password`; clients negotiate down. |
@@ -354,7 +354,7 @@ The implementation must ship with a comprehensive automated test suite organized
 Suggested layout:
 
 ```
-cmd/minissh/             # main package
+cmd/minisshd/             # main package
 internal/
 ├── auth/                # password/username resolution + check
 ├── ratelimit/           # exponential backoff state machine
@@ -375,18 +375,18 @@ All tests run under `go test -race`.
 Each component is tested in isolation. At minimum:
 
 **`auth`**
-- Password resolution precedence: `--pass` > `MINISSH_PASS` > generated. Generated password is exactly 6 numeric digits drawn from `crypto/rand`.
+- Password resolution precedence: `--pass` > `MINISSHD_PASS` > generated. Generated password is exactly 6 numeric digits drawn from `crypto/rand`.
 - Password validation accepts any non-empty string (e.g. `"12345"`, `"hunter2"`, `"a very long passphrase with spaces"`, `"日本語"`); rejects only `""`.
-- Username resolution precedence: `--user` > `MINISSH_USER` > OS user. Empty resolved value is an error.
+- Username resolution precedence: `--user` > `MINISSHD_USER` > OS user. Empty resolved value is an error.
 - Credential check uses SHA-256 + `subtle.ConstantTimeCompare`; both hash comparisons always run (no short-circuit). Verified by code inspection in review. A timing test (10 000 wrong-user and 10 000 wrong-password attempts) compares the two timing samples with a two-sided Mann-Whitney U test; the test asserts U-statistic p-value > 0.001 (i.e. no statistically detectable difference at α = 0.001). A simple mean-ratio check is **not** used because microsecond-scale operations on shared CI hardware have noise that defeats any tight threshold.
 - Auth callback returns `(ok, reason)` for all four combinations of {good, bad} × {user, password}, with `reason ∈ {"", "bad-user", "bad-password"}`. When both inputs are bad, `reason == "bad-user"`.
 
-**`cmd/minissh` startup validation**
+**`cmd/minisshd` startup validation**
 - `--port -1`, `--port 65536`, `--port abc` all exit 2 with a message naming the rejected value. `--port 0` succeeds and the `listening` event reports the actually-bound port.
 - `--shell /nonexistent`, `--shell /etc/passwd` (not executable), `--shell /etc` (directory) all exit 2.
 - `--bind not-an-ip`, `--bind 999.0.0.1` exit 2; `--bind 0.0.0.0`, `--bind ::`, `--bind ::1` succeed.
-- `~/.minissh/` pre-existing with mode `0755` exits 4 with a `chmod 700` message; mode `0700` is accepted and unchanged.
-- Banner: with `--pass hunter2`, captured stdout does **not** contain a `Password:` line. Same with `MINISSH_PASS=hunter2` in the environment (no `--pass`). With no `--pass` and no `MINISSH_PASS`, captured stdout contains exactly one `^Password: \d{6}$` line, *after* the listener has bound.
+- `~/.minisshd/` pre-existing with mode `0755` exits 4 with a `chmod 700` message; mode `0700` is accepted and unchanged.
+- Banner: with `--pass hunter2`, captured stdout does **not** contain a `Password:` line. Same with `MINISSHD_PASS=hunter2` in the environment (no `--pass`). With no `--pass` and no `MINISSHD_PASS`, captured stdout contains exactly one `^Password: \d{6}$` line, *after* the listener has bound.
 - Banner-suppression on failure: with no `--pass` set and an intentionally bad `--bind 999.999.999.999`, the process exits non-zero and captured stdout is empty (the password is never generated, let alone printed).
 
 **`ratelimit`** (clock is injected for determinism)
@@ -400,8 +400,8 @@ Each component is tested in isolation. At minimum:
 **`hostkey`**
 - Generates an Ed25519 key when the file is missing; writes mode `0600`; writes the `.pub` sibling at `0644`.
 - Loads an existing key without modification.
-- Refuses to load a key whose mode is wider than `0600` (exit code 4 surface tested in `cmd/minissh`).
-- Refuses to load a corrupt/unparseable key (truncate the file to 5 random bytes, then try to load → returns an error; cmd/minissh-level test verifies this surfaces as exit code 4).
+- Refuses to load a key whose mode is wider than `0600` (exit code 4 surface tested in `cmd/minisshd`).
+- Refuses to load a corrupt/unparseable key (truncate the file to 5 random bytes, then try to load → returns an error; cmd/minisshd-level test verifies this surfaces as exit code 4).
 - Round-trips: generate → load → marshal → load again → byte-identical.
 
 **`server` / `session`**
@@ -434,7 +434,7 @@ Required scenarios:
 - 20 concurrent connections each running a short exec command all succeed.
 - Server rejects `direct-tcpip` channel opens.
 - Server rejects `x11-req` on a session channel.
-- **Interactive shell loads `~/.zshrc`**: with `HOME=t.TempDir()` and `--shell /bin/zsh`, write `echo MINISSH_RC_LOADED_$$` into `$HOME/.zshrc`, open a session channel, request a PTY, send `shell`, send `exit\n`, read all output → captured output must contain `MINISSH_RC_LOADED_` followed by the child PID. Also write a sentinel into `$HOME/.zprofile` (`echo MINISSH_PROFILE_LOADED`) and confirm both markers appear, in `.zprofile`-then-`.zshrc` order.
+- **Interactive shell loads `~/.zshrc`**: with `HOME=t.TempDir()` and `--shell /bin/zsh`, write `echo MINISSHD_RC_LOADED_$$` into `$HOME/.zshrc`, open a session channel, request a PTY, send `shell`, send `exit\n`, read all output → captured output must contain `MINISSHD_RC_LOADED_` followed by the child PID. Also write a sentinel into `$HOME/.zprofile` (`echo MINISSHD_PROFILE_LOADED`) and confirm both markers appear, in `.zprofile`-then-`.zshrc` order.
 - **Exec does not load `~/.zshrc`**: same setup as above (sentinels in `.zshrc` and `.zprofile`), but instead of `shell` send `exec 'echo CMD_OUTPUT'`. Captured stdout must equal `"CMD_OUTPUT\n"` exactly — the `.zshrc` and `.zprofile` markers must **not** appear. A `.zshenv` sentinel written in the same test, by contrast, **must** appear (zsh sources `.zshenv` even for `-c`).
 - **`shell` without prior `pty-req`** (matches the §8 combinations table): write a `.zprofile` sentinel and a `.zshrc` sentinel. Open a session channel, skip `pty-req`, send `shell`, then send `exit\n` on the channel data stream. Captured output must contain the `.zprofile` marker (login shell loaded it) and must NOT contain the `.zshrc` marker (not interactive).
 - **IPv4-mapped IPv6 normalization (§5):** start the server with `--bind ::` (dual-stack). Make a single IPv4 connection from `127.0.0.1` and fail auth once. On a dual-stack listener that IPv4 connection arrives at the SSH layer with remote address `::ffff:127.0.0.1`. The rate-limiter must expose a way to inspect its current state (e.g. a `Snapshot()` method returning a `map[string]int` of `key → fail_count`; the same surface is useful for an eventual admin endpoint and so is not test-only). Assert: (a) the snapshot contains the key `127.0.0.1` (the normalized form) and not `::ffff:127.0.0.1` — proving normalization happened; (b) `fail_count == 1` under that key. Then make a second IPv4 connection from `127.0.0.1` and fail again; assert the count under `127.0.0.1` is now 2. For comparison, make a connection from `::1` (pure IPv6 loopback) and fail; assert it occupies a *separate* key `::1` with `fail_count == 1`.
@@ -446,8 +446,8 @@ Build-tag-gated tests that compile the binary and exercise it with the **system 
 
 **Harness requirements:**
 
-1. A `TestMain` helper builds the binary once per `go test` run with `go build -cover -o $TMPDIR/minissh-test ./cmd/minissh` (Go 1.20+ coverage-instrumented binary) so coverage from the spawned process is captured.
-2. Each test spawns the binary on a unique ephemeral port with a known `--user`, `--pass`, and a fresh `HOME` pointing at `t.TempDir()` to isolate `~/.minissh/`.
+1. A `TestMain` helper builds the binary once per `go test` run with `go build -cover -o $TMPDIR/minisshd-test ./cmd/minisshd` (Go 1.20+ coverage-instrumented binary) so coverage from the spawned process is captured.
+2. Each test spawns the binary on a unique ephemeral port with a known `--user`, `--pass`, and a fresh `HOME` pointing at `t.TempDir()` to isolate `~/.minisshd/`.
 3. The client side answers the password prompt by spawning `ssh`/`sftp`/`scp` under a PTY via `creack/pty`. **Every** invocation must pass these options to avoid host-key prompts and noisy output: `-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o GlobalKnownHostsFile=/dev/null`. The exception is test 13 (host-key persistence), which must instead use `-o UserKnownHostsFile=<tmpfile> -o StrictHostKeyChecking=yes` on its second connect, having captured the fingerprint from the first connect. The harness then waits for the password prompt — read from the PTY until it sees `(?i)password:\s*$` at the end of the buffered output, or until a 10 s timeout (treat as failure). Only then write `<password>\n`. Writing earlier loses the password to the pre-prompt state. This avoids any dependency on `sshpass` or `expect`.
 4. The harness waits for the `listening` log line on the server's stdout before driving the client.
 5. `GOCOVERDIR` is set to a per-run directory; coverage data is merged into the overall report via `go tool covdata` after each test exits. **Coverage data is only flushed on graceful exit** — if the harness escalates to `SIGKILL` (e.g. server hangs past the 5 s drain in §8 Signal handling), that test's coverage is lost. Test authors should detect this and re-run rather than letting it silently lower the merged coverage.
@@ -466,11 +466,11 @@ All tests start the server with `--user testuser` unless a test explicitly varie
 7. **Pubkey-only fails** — `-o PreferredAuthentications=publickey -o PasswordAuthentication=no` → exits non-zero.
 8. **Port forwarding rejected** — start `ssh -p PORT -N -L 18080:127.0.0.1:1 testuser@127.0.0.1` as a background process. Wait for the SSH session to establish by polling the local forwarded port `127.0.0.1:18080` with 100 ms `net.DialTimeout` attempts until one returns no error (the local listener only opens after ssh has authenticated and the channel-multiplexer is ready); fail the test if the poll doesn't succeed within 10 s. Once established, open a fresh `net.DialTimeout` connection to `127.0.0.1:18080` with a 2 s timeout; the connect must succeed at the local level but the connection must return EOF or close immediately (because the server rejects the `direct-tcpip` channel-open). The server log must contain `reject what=tcpip`. Terminate the background ssh process at the end of the test.
 9. **Backoff observable** — open 5 separate TCP connections sequentially, each with exactly 1 wrong-password attempt before disconnecting. Total elapsed wall-clock time (from start of connection 1 to disconnect of connection 5) must be ≥ 1+2+4+8 = 15 s (allow ±20%). Each connection's auth happens after the per-IP lock acquires and the configured delay passes.
-10. **Auto-generated password** — start binary with no `--pass` and no `MINISSH_PASS`; parse the `Password: \d{6}` line from stdout; that password authenticates.
+10. **Auto-generated password** — start binary with no `--pass` and no `MINISSHD_PASS`; parse the `Password: \d{6}` line from stdout; that password authenticates.
 11. **Configured username variance** — restart the server with `--user alice` (overriding the default `testuser`): `ssh alice@127.0.0.1` works, `ssh testuser@127.0.0.1` fails with `reason=bad-user`. This proves `--user` actually changes the expected name (rather than being ignored or always falling back to the OS user).
 12. **Graceful shutdown** — run an exec that echoes its own PID and then sleeps: `ssh -p PORT testuser@127.0.0.1 'echo PID=$$; exec sleep 60'`. The `exec` builtin replaces the shell with `sleep`, keeping the same PID, so the echoed `$$` is the PID of the sleeping child. Wait for the `PID=` line, parse it. Then send SIGTERM to the server. Assert: (a) within 1 s a `shutdown-signal sig=HUP reason=shutdown pgid=…` event appears in the server log; (b) the server process exits with code 0 within 5 s; (c) the captured child PID is no longer running (`syscall.Kill(pid, 0)` returns ESRCH).
-13. **Host-key persistence** — first connect with `-o UserKnownHostsFile=<tmp> -o StrictHostKeyChecking=accept-new` and capture the fingerprint from `<tmp>` (or alternatively from `-o VisualHostKey=no` plus ssh output). Stop the server cleanly. Restart it with the same `HOME` (so the same `~/.minissh/host_key`). Reconnect with the *same* `<tmp>` and `-o StrictHostKeyChecking=yes`; the connection must succeed without ssh complaining about a changed host key. Then change `HOME` to a fresh `t.TempDir()`, restart again (forcing a new host key), and reconnect with the same `<tmp>` — this attempt must fail with the SSH client's "REMOTE HOST IDENTIFICATION HAS CHANGED" error, confirming the test would have caught a regression that silently changed the host key.
-14. **Host-key permission refusal** — first start the binary normally (with default `--host-key` pointing into the test's tmp HOME) so it generates the key with mode `0600`. Stop the binary cleanly. Then `chmod 0644 $HOME/.minissh/host_key` and start the binary again — it must exit 4 with a stderr message instructing `chmod 600`.
+13. **Host-key persistence** — first connect with `-o UserKnownHostsFile=<tmp> -o StrictHostKeyChecking=accept-new` and capture the fingerprint from `<tmp>` (or alternatively from `-o VisualHostKey=no` plus ssh output). Stop the server cleanly. Restart it with the same `HOME` (so the same `~/.minisshd/host_key`). Reconnect with the *same* `<tmp>` and `-o StrictHostKeyChecking=yes`; the connection must succeed without ssh complaining about a changed host key. Then change `HOME` to a fresh `t.TempDir()`, restart again (forcing a new host key), and reconnect with the same `<tmp>` — this attempt must fail with the SSH client's "REMOTE HOST IDENTIFICATION HAS CHANGED" error, confirming the test would have caught a regression that silently changed the host key.
+14. **Host-key permission refusal** — first start the binary normally (with default `--host-key` pointing into the test's tmp HOME) so it generates the key with mode `0600`. Stop the binary cleanly. Then `chmod 0644 $HOME/.minisshd/host_key` and start the binary again — it must exit 4 with a stderr message instructing `chmod 600`.
 15. **Bind to loopback** — start with `--bind 127.0.0.1`. (a) `ssh -p PORT testuser@127.0.0.1` succeeds. (b) Pick a non-loopback IPv4 address by enumerating interfaces (`net.InterfaceAddrs` in Go); skip the test if none is available (CI sometimes has only loopback). (c) `ssh -p PORT testuser@<non-loopback-ip>` must fail with a connection error (TCP refused or timeout — not a Permission denied), proving the bind restriction holds at the kernel level.
 16. **Invalid bind address** — start with `--bind not-an-ip`, assert exit 2 with a clear stderr message naming the rejected value.
 

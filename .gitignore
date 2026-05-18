@@ -1,6 +1,6 @@
 # binaries
-/minissh
-/minissh-test
+/minisshd
+/minisshd-test
 
 # Go build/test artifacts
 *.test

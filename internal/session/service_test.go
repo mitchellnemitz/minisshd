@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mitchellnemitz/minissh/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
 	"golang.org/x/crypto/ssh"
 )
 

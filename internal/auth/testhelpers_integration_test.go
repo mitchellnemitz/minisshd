@@ -19,11 +19,11 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mitchellnemitz/minissh/internal/auth"
-	"github.com/mitchellnemitz/minissh/internal/logging"
-	"github.com/mitchellnemitz/minissh/internal/ratelimit"
-	"github.com/mitchellnemitz/minissh/internal/server"
-	"github.com/mitchellnemitz/minissh/internal/session"
+	"github.com/mitchellnemitz/minisshd/internal/auth"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/ratelimit"
+	"github.com/mitchellnemitz/minisshd/internal/server"
+	"github.com/mitchellnemitz/minisshd/internal/session"
 )
 
 type testServerOptions struct {

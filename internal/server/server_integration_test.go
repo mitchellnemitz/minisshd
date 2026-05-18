@@ -324,8 +324,8 @@ func TestIntegration_InteractiveShellLoadsZshrc(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeRCFiles(t, home,
-		"echo MINISSH_RC_LOADED_$$\n",
-		"echo MINISSH_PROFILE_LOADED\n",
+		"echo MINISSHD_RC_LOADED_$$\n",
+		"echo MINISSHD_PROFILE_LOADED\n",
 		"")
 
 	ts := startTestServer(t, testServerOptions{shell: "/bin/zsh"})
@@ -354,8 +354,8 @@ func TestIntegration_InteractiveShellLoadsZshrc(t *testing.T) {
 	_, _ = waitSession(t, sess, 5*time.Second)
 
 	s := out.String()
-	profileIdx := strings.Index(s, "MINISSH_PROFILE_LOADED")
-	rcIdx := strings.Index(s, "MINISSH_RC_LOADED_")
+	profileIdx := strings.Index(s, "MINISSHD_PROFILE_LOADED")
+	rcIdx := strings.Index(s, "MINISSHD_RC_LOADED_")
 	if profileIdx < 0 || rcIdx < 0 {
 		t.Fatalf("expected both .zprofile and .zshrc markers in output:\n%s", s)
 	}
@@ -370,9 +370,9 @@ func TestIntegration_ExecDoesNotLoadZshrc(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeRCFiles(t, home,
-		"echo MINISSH_RC_LOADED\n",
-		"echo MINISSH_PROFILE_LOADED\n",
-		"echo MINISSH_ENV_LOADED\n")
+		"echo MINISSHD_RC_LOADED\n",
+		"echo MINISSHD_PROFILE_LOADED\n",
+		"echo MINISSHD_ENV_LOADED\n")
 
 	ts := startTestServer(t, testServerOptions{shell: "/bin/zsh"})
 	defer ts.cleanup()
@@ -391,16 +391,16 @@ func TestIntegration_ExecDoesNotLoadZshrc(t *testing.T) {
 		}
 	}
 	// zshenv is sourced even for -c; CMD_OUTPUT must be present.
-	if !strings.Contains(s, "MINISSH_ENV_LOADED") {
+	if !strings.Contains(s, "MINISSHD_ENV_LOADED") {
 		t.Fatalf("expected .zshenv marker in output:\n%s", s)
 	}
 	if !strings.Contains(s, "CMD_OUTPUT") {
 		t.Fatalf("expected CMD_OUTPUT in output:\n%s", s)
 	}
-	if strings.Contains(s, "MINISSH_RC_LOADED") {
+	if strings.Contains(s, "MINISSHD_RC_LOADED") {
 		t.Fatalf("did NOT expect .zshrc marker in bare-exec output:\n%s", s)
 	}
-	if strings.Contains(s, "MINISSH_PROFILE_LOADED") {
+	if strings.Contains(s, "MINISSHD_PROFILE_LOADED") {
 		t.Fatalf("did NOT expect .zprofile marker in bare-exec output:\n%s", s)
 	}
 }
@@ -410,8 +410,8 @@ func TestIntegration_BareShellLoadsZprofileButNotZshrc(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeRCFiles(t, home,
-		"echo MINISSH_RC_LOADED\n",
-		"echo MINISSH_PROFILE_LOADED\n",
+		"echo MINISSHD_RC_LOADED\n",
+		"echo MINISSHD_PROFILE_LOADED\n",
 		"")
 
 	ts := startTestServer(t, testServerOptions{shell: "/bin/zsh"})
@@ -440,10 +440,10 @@ func TestIntegration_BareShellLoadsZprofileButNotZshrc(t *testing.T) {
 	_, _ = waitSession(t, sess, 5*time.Second)
 
 	s := out.String()
-	if !strings.Contains(s, "MINISSH_PROFILE_LOADED") {
+	if !strings.Contains(s, "MINISSHD_PROFILE_LOADED") {
 		t.Fatalf("expected .zprofile marker in no-pty shell output:\n%s", s)
 	}
-	if strings.Contains(s, "MINISSH_RC_LOADED") {
+	if strings.Contains(s, "MINISSHD_RC_LOADED") {
 		t.Fatalf("did NOT expect .zshrc marker in no-pty shell output:\n%s", s)
 	}
 }
@@ -453,7 +453,7 @@ func TestIntegration_ExecWithPtyLoadsZshrcAndHasTERM(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	writeRCFiles(t, home,
-		"echo MINISSH_RC_LOADED\n",
+		"echo MINISSHD_RC_LOADED\n",
 		"",
 		"")
 
@@ -481,7 +481,7 @@ func TestIntegration_ExecWithPtyLoadsZshrcAndHasTERM(t *testing.T) {
 	}
 	_, _ = waitSession(t, sess, 5*time.Second)
 	s := out.String()
-	if !strings.Contains(s, "MINISSH_RC_LOADED") {
+	if !strings.Contains(s, "MINISSHD_RC_LOADED") {
 		t.Fatalf("expected .zshrc marker (PTY -> interactive):\n%s", s)
 	}
 	if !strings.Contains(s, "TERM_IS_xterm") {

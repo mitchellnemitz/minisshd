@@ -7,7 +7,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/mitchellnemitz/minissh/internal/hostkey"
+	"github.com/mitchellnemitz/minisshd/internal/hostkey"
 )
 
 // Integration test for host-key persistence: a regenerated key after

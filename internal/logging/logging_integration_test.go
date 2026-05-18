@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/mitchellnemitz/minissh/internal/logging"
+	"github.com/mitchellnemitz/minisshd/internal/logging"
 )
 
 // Integration-level assertions on the structured logger. The unit tests

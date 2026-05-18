@@ -96,7 +96,7 @@ func spawnServer(t *testing.T, opts spawnOptions) *spawnedServer {
 	args = append(args, opts.extraArgs...)
 
 	cmd := exec.Command(bin, args...)
-	logPath := filepath.Join(opts.home, "minissh.log")
+	logPath := filepath.Join(opts.home, "minisshd.log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		t.Fatalf("create log file: %v", err)
@@ -280,9 +280,9 @@ func discoverShellE2E(t *testing.T) string {
 	return ""
 }
 
-// runMinisshOnce spawns the binary expecting it to exit non-zero
+// runMinisshdOnce spawns the binary expecting it to exit non-zero
 // (e.g. invalid bind). Returns exit code and combined stdout/stderr.
-func runMinisshOnce(t *testing.T, opts spawnOptions) (int, string) {
+func runMinisshdOnce(t *testing.T, opts spawnOptions) (int, string) {
 	t.Helper()
 	bin := requireBin(t)
 	if opts.shell == "" {

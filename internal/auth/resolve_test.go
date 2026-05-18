@@ -43,7 +43,7 @@ func TestResolvePasswordStrict_RejectsExplicitEmpty(t *testing.T) {
 	if _, err := ResolvePasswordStrict("", true, "", false); !errors.Is(err, ErrEmptyPassword) {
 		t.Errorf("strict resolve with empty flag: want ErrEmptyPassword, got %v", err)
 	}
-	// MINISSH_PASS="" with the flag absent is similarly rejected.
+	// MINISSHD_PASS="" with the flag absent is similarly rejected.
 	if _, err := ResolvePasswordStrict("", false, "", true); !errors.Is(err, ErrEmptyPassword) {
 		t.Errorf("strict resolve with empty env: want ErrEmptyPassword, got %v", err)
 	}

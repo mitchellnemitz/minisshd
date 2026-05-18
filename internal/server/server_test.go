@@ -63,16 +63,22 @@ func newTestServer(t *testing.T, ln net.Listener) *Server {
 	return newWithDeps(cfg, &nopSession{})
 }
 
-func TestNewServerConfig_MaxAuthTriesIs4(t *testing.T) {
-	// Spec §4: one mandatory `none` probe + three real password
-	// attempts. golang.org/x/crypto/ssh increments MaxAuthTries on the
-	// `none` probe, so we MUST set 4.
+func TestNewServerConfig_MaxAuthTriesIs3(t *testing.T) {
+	// Spec §4 mandates "3 real password attempts per connection ...
+	// count password failures only." The spec also names MaxAuthTries=4,
+	// but that literal assumed golang.org/x/crypto/ssh counts the
+	// mandatory `none` probe — which v0.51.0 no longer does (it exempts
+	// the first `none` from the counter). We honor the behavioral
+	// guarantee over the stale literal: setting MaxAuthTries=3 yields
+	// exactly three password failures under the current library.
 	ln := mustListen(t)
 	defer ln.Close()
 	s := newTestServer(t, ln)
 	cfg := s.newServerConfig()
-	if cfg.MaxAuthTries != 4 {
-		t.Fatalf("MaxAuthTries = %d, want 4 (spec §4)", cfg.MaxAuthTries)
+	if cfg.MaxAuthTries != 3 {
+		t.Fatalf("MaxAuthTries = %d, want 3 (spec §4 guarantees three "+
+			"password attempts; golang.org/x/crypto/ssh v0.51.0 exempts "+
+			"the initial `none` probe from the counter)", cfg.MaxAuthTries)
 	}
 }
 

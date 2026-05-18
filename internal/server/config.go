@@ -44,11 +44,22 @@ var _ sessionHandler = (*session.Service)(nil)
 // public handshake. RFC 4253 §4.2 requires the "SSH-2.0-" prefix.
 const ServerVersion = "SSH-2.0-minissh"
 
-// MaxAuthTries is the value set on ssh.ServerConfig.MaxAuthTries. Spec §4
-// requires 4 (one mandatory `none` probe + three real password attempts):
-// setting 3 would deliver only two password attempts because
-// golang.org/x/crypto/ssh increments the counter on the `none` probe too.
-const MaxAuthTries = 4
+// MaxAuthTries is the value set on ssh.ServerConfig.MaxAuthTries.
+//
+// Spec §4 mandates the behavioral guarantee: "3 real password attempts
+// per connection ... count password failures only." The spec also names
+// MaxAuthTries = 4 as the value to use, justified by the claim that
+// golang.org/x/crypto/ssh increments the counter on the mandatory `none`
+// probe. That claim is stale: the current library (v0.51.0) exempts the
+// first `none` from the counter (server.go: "Allow initial attempt of
+// 'none' without penalty."). With MaxAuthTries = 4 the server would
+// deliver four password failures, violating the behavioral guarantee.
+//
+// We therefore set MaxAuthTries = 3, which produces exactly three
+// password attempts under v0.51.0 — honoring the spec's load-bearing
+// rule ("count password failures only") over its now-stale literal
+// value. The §13.3 integration test asserts the count is exactly 3.
+const MaxAuthTries = 3
 
 // Config bundles the wiring inputs the server needs. cmd/minissh
 // constructs this with a bound listener, a loaded host key, the auth

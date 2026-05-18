@@ -97,8 +97,8 @@ func TestCredentials_Check_NoShortCircuit(t *testing.T) {
 // TestCredentials_Check_TimingEnvelope is a loose timing assertion that
 // wrong-user and wrong-password paths complete within the same envelope.
 // The strict statistical Mann-Whitney test described in spec §13.2 lives
-// in test-impl's later layer; this one just guards against an O(N)
-// regression like an accidental strings.Compare being re-introduced.
+// in a later layer; this one just guards against an O(N) regression
+// like an accidental strings.Compare being re-introduced.
 //
 // We run each case enough times to amortize noise and assert the mean of
 // each path is within 5x of the other. A real timing leak would show

@@ -36,8 +36,8 @@ type sessionHandler interface {
 }
 
 // Compile-time assertion that the concrete session.Service satisfies
-// the local sessionHandler seam. If session-impl ever changes the
-// signature this fails to build here rather than at the call site.
+// the local sessionHandler seam. If the signature ever changes, this
+// fails to build here rather than at the call site.
 var _ sessionHandler = (*session.Service)(nil)
 
 // ServerVersion is the SSH identification string we announce in the

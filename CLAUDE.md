@@ -13,4 +13,4 @@
 - The coverage threshold lives in the Makefile as a single variable (`COVERAGE_THRESHOLD := 90.0`) so it can be raised over time.
 - `internal/version` is excluded from the coverage threshold (constants only). No other exclusions are permitted.
 - After adding new imports, run `go mod tidy` to keep `go.mod`/`go.sum` aligned.
-- macOS is the supported runtime. Linux is acceptable for development but PTY/SFTP/signal semantics must match macOS; gate platform-specific tests with `runtime.GOOS == "darwin"` or `// +build darwin` only when truly required.
+- macOS and Linux are supported runtimes. PTY/SFTP/signal semantics must work on both; gate platform-specific tests with `runtime.GOOS` only when truly required, and prefer assertions that hold on both OSes.

@@ -1,6 +1,6 @@
 # minisshd — Spec
 
-A minimal, single-user SSH server for macOS. Runs as the invoking user, authenticates clients with a username and password (a random 6-digit password is generated if none is supplied), and supports interactive shell, one-off command execution, and SFTP file transfer over the standard SSH protocol so the system `ssh` and `sftp` clients work unmodified.
+A minimal, single-user SSH server for macOS and Linux. Runs as the invoking user, authenticates clients with a username and password (a random 6-digit password is generated if none is supplied), and supports interactive shell, one-off command execution, and SFTP file transfer over the standard SSH protocol so the system `ssh` and `sftp` clients work unmodified.
 
 ---
 
@@ -10,7 +10,7 @@ A minimal, single-user SSH server for macOS. Runs as the invoking user, authenti
 
 - `golang.org/x/crypto/ssh` provides a production-grade SSH server library with full protocol support, password auth callbacks, channel/request handling, and SFTP subsystem hooks.
 - `github.com/pkg/sftp` plugs straight into `x/crypto/ssh` for the file-transfer subsystem.
-- `github.com/creack/pty` handles macOS PTY allocation for interactive shells.
+- `github.com/creack/pty` handles PTY allocation for interactive shells on macOS and Linux.
 - Single static binary, no runtime dependencies.
 
 Python (`asyncssh`) is a viable alternative if Go is unavailable, but the spec below uses Go-specific language throughout (`subtle.ConstantTimeCompare`, `crypto/rand`, `net.ParseIP`, `Setsid`, goroutines, `EADDRNOTAVAIL`, `go build -cover`, etc.). A non-Go implementation must provide the equivalent semantics: a constant-time string compare from a vetted library, a CSPRNG, IP literal parsing, POSIX `setsid`/process groups, the right errno mapping, and a coverage tool that produces line-coverage figures compatible with the §13.5 threshold.
@@ -40,7 +40,7 @@ minisshd [flags]
 
 | Var | Purpose |
 |---|---|
-| `MINISSHD_PASS` | Password value. Used only if `--pass` is not provided. Preferred over `--pass` because command-line arguments are visible to any local user via `ps`; environment variables are less exposed (not visible in default `ps` output on macOS). |
+| `MINISSHD_PASS` | Password value. Used only if `--pass` is not provided. Preferred over `--pass` because command-line arguments are visible to any local user via `ps`; environment variables are less exposed (not visible in default `ps` output on macOS or Linux). |
 | `MINISSHD_USER` | Expected username. Used only if `--user` is not provided. |
 
 ### Startup validation
@@ -63,7 +63,7 @@ The ordering matters for security: the password banner is printed only when the 
 
 ## 3. Network exposure
 
-By default the listener binds to `0.0.0.0`, so the server is reachable from the LAN over IPv4. Pass `--bind 127.0.0.1` to restrict it to IPv4 loopback, or a specific interface address to limit it further. For IPv6, use `--bind ::` to accept both IPv6 and IPv4-mapped clients (the implementation must explicitly set `IPV6_V6ONLY = 0` on the listening socket; the OS default varies and isn't safe to rely on), or `--bind ::1` for IPv6 loopback only. A single `--bind` value produces a single listening socket; if you need both pure-IPv4 and pure-IPv6 on the same port, run two instances. No firewall manipulation is performed; the user is responsible for any pf or Application Firewall configuration on macOS.
+By default the listener binds to `0.0.0.0`, so the server is reachable from the LAN over IPv4. Pass `--bind 127.0.0.1` to restrict it to IPv4 loopback, or a specific interface address to limit it further. For IPv6, use `--bind ::` to accept both IPv6 and IPv4-mapped clients (the implementation must explicitly set `IPV6_V6ONLY = 0` on the listening socket; the OS default varies and isn't safe to rely on), or `--bind ::1` for IPv6 loopback only. A single `--bind` value produces a single listening socket; if you need both pure-IPv4 and pure-IPv6 on the same port, run two instances. No firewall manipulation is performed; the user is responsible for any host firewall configuration (pf or Application Firewall on macOS, iptables/nftables/ufw on Linux).
 
 The server must not be exposed to the public internet by design — this is called out in the README — but no code-level check enforces this.
 
@@ -171,7 +171,7 @@ The server must implement enough of the protocol to satisfy these client invocat
 | `ssh host` | `session` | `pty-req` then `shell` | Interactive PTY-backed shell (see §8). |
 | `ssh host CMD` | `session` | `exec` | Run `CMD` via `$SHELL -c CMD`, stream stdout/stderr, propagate `exit-status` or `exit-signal` per §8.2 step 5. |
 | `sftp host` | `session` | `subsystem sftp` | Hand the channel to an SFTP server implementation rooted at `/`. |
-| `scp` (modern) | `session` | `subsystem sftp` | Modern OpenSSH `scp` (9.0+, default on macOS Sonoma) uses SFTP. Works via the SFTP subsystem above. |
+| `scp` (modern) | `session` | `subsystem sftp` | Modern OpenSSH `scp` (9.0+, default on macOS Sonoma and recent Linux distros) uses SFTP. Works via the SFTP subsystem above. |
 | `scp -O` (legacy) | `session` | `exec scp …` | Legacy `scp` invoked with `-O` runs a remote `scp` binary. Works via the `exec` path. |
 
 The following must be **explicitly rejected** with a `ChannelOpenFailure` or request reject:
@@ -204,9 +204,9 @@ A session channel may receive `pty-req`, `env`, `shell`, `exec`, and `subsystem`
 ### Interactive shell
 
 1. On `pty-req`, allocate a PTY using `creack/pty`. Honor the requested `TERM`, rows, cols, and pixel dimensions. Handle subsequent `window-change` requests by resizing the PTY.
-2. On `shell`, spawn the configured shell as a **login shell using the hyphen-prefix convention**: set the child's `argv[0]` to `-<basename>` (e.g. `-zsh` for `/bin/zsh`). If a PTY was allocated in step 1, attach the child's stdio to the PTY slave; otherwise wire stdin/stdout/stderr directly to the channel (see §8 Request-type combinations for the no-pty case). This is the same login convention OpenSSH and macOS's loginwindow use. In Go: `cmd := exec.Command(shellPath); cmd.Args = []string{"-" + filepath.Base(shellPath)}`. Do not also pass `-l` — the hyphen prefix is sufficient and avoids redundant flags.
+2. On `shell`, spawn the configured shell as a **login shell using the hyphen-prefix convention**: set the child's `argv[0]` to `-<basename>` (e.g. `-zsh` for `/bin/zsh`). If a PTY was allocated in step 1, attach the child's stdio to the PTY slave; otherwise wire stdin/stdout/stderr directly to the channel (see §8 Request-type combinations for the no-pty case). This is the same login convention OpenSSH uses. In Go: `cmd := exec.Command(shellPath); cmd.Args = []string{"-" + filepath.Base(shellPath)}`. Do not also pass `-l` — the hyphen prefix is sufficient and avoids redundant flags.
 3. The child loads its shell rc files according to which conditions are met:
-   - **PTY + login (the `pty-req → shell` case):** stdin/stderr are TTYs and `argv[0]` starts with `-`, so the shell is both interactive and a login shell. For zsh on macOS the full rc chain loads, in order: `/etc/zshenv` → `~/.zshenv` → `/etc/zprofile` → `~/.zprofile` → `/etc/zshrc` → `~/.zshrc` → `/etc/zlogin` → `~/.zlogin`.
+   - **PTY + login (the `pty-req → shell` case):** stdin/stderr are TTYs and `argv[0]` starts with `-`, so the shell is both interactive and a login shell. For zsh the full rc chain loads, in order: `/etc/zshenv` → `~/.zshenv` → `/etc/zprofile` → `~/.zprofile` → `/etc/zshrc` → `~/.zshrc` → `/etc/zlogin` → `~/.zlogin`.
    - **No PTY + login (the `shell` without `pty-req` case):** login but not interactive. zsh loads `.zshenv`, `.zprofile`, `.zlogin` but **not** `.zshrc`.
 
    In either case the implementation must not interfere with rc loading — no extra flags, no `-c`, no overriding of `ZDOTDIR`, `ENV`, or `BASH_ENV`.
@@ -341,7 +341,7 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 - File-based logging, log rotation, log shipping, structured JSON output. Logs go to stdout; redirect if you need a file.
 - Daemonization or auto-start at login. Run it in a terminal or under your own process supervisor.
 - Privileged operations or running as another user.
-- Linux / Windows support. macOS only.
+- Windows support. macOS and Linux only.
 
 ---
 
@@ -458,7 +458,7 @@ Build-tag-gated tests that compile the binary and exercise it with the **system 
 All tests start the server with `--user testuser` unless a test explicitly varies it. The literal `testuser` below stands in for that configured username.
 
 1. **Interactive shell** — drive `ssh -p PORT testuser@127.0.0.1` under a PTY, supply password, generate a random 16-char marker (e.g. `MARKER_<uuidv4-suffix>`), send `echo <marker>; exit`, assert the marker appears as a standalone line in the captured output. A random marker prevents collision with prompts or `~/.zshrc` output.
-2. **Exec & exit code** — `ssh -p PORT testuser@127.0.0.1 'uname -a; exit 7'` → stdout contains `Darwin`, exit code 7.
+2. **Exec & exit code** — `ssh -p PORT testuser@127.0.0.1 'uname -a; exit 7'` → stdout contains `Darwin` (macOS) or `Linux`, exit code 7.
 3. **SFTP round-trip** — `sftp -P PORT testuser@127.0.0.1` puts and gets a 1 MB random file at `<t.TempDir()>/sftp-payload` (the path is absolute and on the test's temp dir, writable by the test user since SFTP is rooted at `/`). Verify the round-tripped file matches the source via SHA-256.
 4. **SCP** — generate a payload at `t.TempDir() + "/payload"`, run `scp -P PORT <payload> testuser@127.0.0.1:<t.TempDir()>/dest`, assert the copied file matches the source byte-for-byte. Per-test temp dirs avoid collisions when E2E tests run in parallel.
 5. **Wrong username** — `ssh wronguser@…` with correct password → exits non-zero; server log contains `auth-fail reason=bad-user`.
@@ -493,4 +493,4 @@ make test-race    # unit + integration under -race
 make coverage     # all layers + merged coverage report, fails if <90%
 ```
 
-Slow tests guard themselves with `if testing.Short() { t.Skip(...) }` at the top so they are skipped automatically when `-short` is passed. `make coverage` runs the full suite (no `-short`) so the slow tests count toward coverage. `make e2e` skips with a clear message (not a failure) if `/usr/bin/ssh`, `/usr/bin/sftp`, or `/usr/bin/scp` is missing. CI on macOS must run `make test`, `make test-slow`, `make e2e`, `make test-race`, and `make coverage` on every PR; all must be green to merge.
+Slow tests guard themselves with `if testing.Short() { t.Skip(...) }` at the top so they are skipped automatically when `-short` is passed. `make coverage` runs the full suite (no `-short`) so the slow tests count toward coverage. `make e2e` skips with a clear message (not a failure) if `/usr/bin/ssh`, `/usr/bin/sftp`, or `/usr/bin/scp` is missing. CI must run `make test`, `make test-slow`, `make e2e`, `make test-race`, and `make coverage` on every PR (on both macOS and Linux runners); all must be green to merge.

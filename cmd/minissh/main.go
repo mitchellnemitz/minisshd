@@ -22,6 +22,9 @@ import (
 	"github.com/mitchellnemitz/minissh/internal/auth"
 	"github.com/mitchellnemitz/minissh/internal/hostkey"
 	"github.com/mitchellnemitz/minissh/internal/logging"
+	"github.com/mitchellnemitz/minissh/internal/ratelimit"
+	"github.com/mitchellnemitz/minissh/internal/server"
+	"github.com/mitchellnemitz/minissh/internal/session"
 )
 
 // Exit codes per spec §11.
@@ -186,7 +189,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// password-scrub guard. Both must be ready before the first connection
 	// is accepted (§4).
 	creds := auth.NewCredentials(username, password)
-	_ = creds // wired into server config in Wave 2
 	logger := logging.New(stdout, password)
 
 	// §2 step 9 — log the listening event with the actually-bound port
@@ -194,24 +196,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	boundPort := listener.Addr().(*net.TCPAddr).Port
 	logger.Listening(bindIP.String(), boundPort, fingerprint, username, os.Getpid())
 
-	// Wave 2 wiring point: construct the server and run its accept loop
-	// against ctx. For now, block until the parent ctx is cancelled
-	// (SIGINT/SIGTERM) so the banner-ordering and listening-event tests
-	// in §13.2 pass.
-	//
-	// TODO(team-lead, Phase 3 wiring): once internal/server lands,
-	// replace this block with:
-	//
-	//   srv := server.New(server.Config{
-	//       Listener:       listener,
-	//       HostKey:        signer,
-	//       Credentials:    creds,
-	//       Limiter:        ratelimit.New(ratelimit.RealClock{}),
-	//       SessionService: &session.Service{Shell: shellPath, Log: logger},
-	//       Log:            logger,
-	//   })
-	//   _ = srv.Serve(ctx)
-	<-ctx.Done()
+	// Construct the server and run its accept loop against ctx.
+	// internal/server owns the connection-level lifecycle (handshake,
+	// rate-limited password callback, channel routing, conn-open/close
+	// logging, drain on ctx-cancel). internal/session owns the §8 PTY/
+	// exec/SFTP machinery per accepted session channel.
+	srv := server.New(server.Config{
+		Listener:       listener,
+		HostKey:        signer,
+		Credentials:    creds,
+		Limiter:        ratelimit.New(ratelimit.RealClock{}),
+		SessionService: &session.Service{Shell: shellPath, Log: logger},
+		Log:            logger,
+	})
+	if err := srv.Serve(ctx); err != nil {
+		logger.Error(err.Error(), "")
+		return exitInternalError
+	}
 	return exitOK
 }
 

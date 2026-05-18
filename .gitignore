@@ -14,8 +14,8 @@
 .idea/
 .vscode/
 
-# Claude Code internal worktrees (not project files)
-.claude/worktrees/
+# Claude Code (not project files)
+.claude/
 
 # macOS
 .DS_Store

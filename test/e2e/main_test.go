@@ -36,7 +36,15 @@ func TestMain(m *testing.M) {
 	}
 
 	bin := filepath.Join(tmpdir, "minissh-test")
-	coverDir = filepath.Join(tmpdir, "covdata")
+	// Honor the Makefile-supplied GOCOVERDIR so spawned-binary coverage
+	// merges with the outer unit/integration profile. Fall back to a
+	// per-suite temp dir when no caller set GOCOVERDIR (e.g. ad-hoc
+	// `go test -tags=e2e`).
+	if env := os.Getenv("GOCOVERDIR"); env != "" {
+		coverDir = env
+	} else {
+		coverDir = filepath.Join(tmpdir, "covdata")
+	}
 	if err := os.MkdirAll(coverDir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "mkdir covdata: %v\n", err)
 		os.Exit(2)

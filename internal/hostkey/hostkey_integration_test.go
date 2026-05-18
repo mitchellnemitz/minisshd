@@ -166,3 +166,35 @@ func TestIntegration_HostKeyParentIsFile(t *testing.T) {
 		t.Fatalf("got err=%v, want wrapping hostkey.ErrParentMissing", err)
 	}
 }
+
+// TestIntegration_HostKeyPubWriteCollidesWithDirectory exercises the
+// generateAndWrite → writePub error branch in `internal/hostkey/hostkey.go`.
+// When the .pub path is already occupied by a directory, os.WriteFile fails
+// and the wrapped error propagates back through LoadOrGenerate. This was
+// a low-coverage branch (64.7% on generateAndWrite) because the spec-required
+// scenarios never trip it.
+func TestIntegration_HostKeyPubWriteCollidesWithDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-only mode semantics")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "host_key")
+	// Pre-create the .pub sibling as a directory to make writePub's
+	// os.WriteFile call fail with EISDIR.
+	pubPath := path + ".pub"
+	if err := os.Mkdir(pubPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := hostkey.LoadOrGenerate(path)
+	if err == nil {
+		t.Fatalf("expected error when %s is a directory; got nil", pubPath)
+	}
+	// The private key may or may not have been written before writePub
+	// failed (it is on the current implementation, which writes private
+	// first); either way we just assert the error surfaces.
+	if errors.Is(err, hostkey.ErrParentMissing) ||
+		errors.Is(err, hostkey.ErrKeyCorrupt) ||
+		errors.Is(err, hostkey.ErrKeyPermissionsTooOpen) {
+		t.Errorf("error should be a write-failure surface, not a sentinel; got %v", err)
+	}
+}

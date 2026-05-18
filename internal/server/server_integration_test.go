@@ -146,27 +146,12 @@ func TestIntegration_TwentyConcurrentExecs(t *testing.T) {
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
-	// Spec §13.3 requires 20 concurrent sessions to all succeed within
-	// ~10 s. With the session-close-after-exit-status fix (3aef20b) the
-	// channel-close deadlock is gone; however, a separate impl race remains
-	// where the trailing output of a fast-exiting non-PTY child can be
-	// dropped on the server side. The child writes its output to a pipe;
-	// the server's io.Copy(ch, stdout) goroutine reads from the parent end
-	// of that pipe; cmd.Wait() (called from a separate goroutine) closes
-	// the parent pipe FD via `closeDescriptors(c.parentIOPipes)` as soon
-	// as the child exits. If io.Copy hasn't finished draining the kernel
-	// pipe buffer at that instant, the close races the read and the
-	// trailing bytes are dropped. exec docs warn: "it is incorrect to call
-	// Wait before all reads from the pipe have completed." Concretely,
-	// `echo $$` (a few bytes) is consistently lost in ~50% of concurrent
-	// invocations; commands that hold the child alive a beat (e.g.
-	// `sleep 0.05; echo $$`) succeed 20/20. See FINDINGS in this
-	// teammate's reply.
-	//
-	// The assertion below is therefore: all 20 sessions complete cleanly
-	// (no dial/session/exit errors), and *at least 12* return output. A
-	// proper impl fix (cmd.Stdout = ch, OR await io.Copy goroutines
-	// before calling cmd.Wait) will let this tighten to 20/20.
+	// Spec §13.3: 20 concurrent sessions, each running a short exec,
+	// must all succeed. After the session-package fix in 4c51adc
+	// (cmd.Stdout/Stderr assigned directly to the channel instead of
+	// using StdoutPipe/StderrPipe + io.Copy goroutines), the pipe-drain
+	// race that was dropping trailing bytes of fast-exiting children is
+	// gone.
 	const n = 20
 	var wg sync.WaitGroup
 	errs := make(chan error, n)
@@ -218,17 +203,10 @@ func TestIntegration_TwentyConcurrentExecs(t *testing.T) {
 			t.Errorf("concurrent exec error: %v", e)
 		}
 	}
-	// Pending the cmd.Wait/io.Copy fix, accept ≥ 1 as the floor (the
-	// concurrent flush race drops bytes on this Linux host in 50–80% of
-	// invocations). Serial invocations are 100% reliable, and PTY shells
-	// drain via Setsize/master close path that's unaffected by the bug.
-	if successes < 1 {
-		t.Fatalf("expected ≥ 1/20 concurrent execs to return PID; got %d/20 "+
-			"(see FINDINGS — cmd.Wait races io.Copy on parent pipe FD)",
-			successes)
+	if successes != n {
+		t.Fatalf("expected %d/%d concurrent execs to return their PID; got %d/%d",
+			n, n, successes, n)
 	}
-	t.Logf("concurrent exec successes: %d/20 (target: 20/20; blocked on session impl flush-on-exit fix)",
-		successes)
 }
 
 func TestIntegration_RejectsDirectTCPIP(t *testing.T) {

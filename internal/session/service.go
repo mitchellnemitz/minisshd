@@ -397,21 +397,23 @@ func (s *Service) startChild(ch ssh.Channel, cmd *exec.Cmd, st *sessionState, re
 		}, nil
 	}
 
-	// Non-PTY path: pipes.
+	// Non-PTY path: assign ch / ch.Stderr() directly so os/exec owns the
+	// stdout/stderr copy goroutines. cmd.Wait() joins those goroutines
+	// before returning, eliminating the StdoutPipe/StderrPipe drain race
+	// where Wait would close the pipe FD before our io.Copy goroutines
+	// finished draining the kernel buffer. (See os/exec docs on
+	// StdoutPipe: "Wait will close the pipe after seeing the command
+	// exit, so most callers need not close it themselves; it is thus
+	// incorrect to call Wait before all reads from the pipe have
+	// completed.") Stdin still uses a pipe because the SSH channel may
+	// stay open after the child closes its stdin, and we want to be
+	// able to close the child's stdin half independently.
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, err
-	}
+	cmd.Stdout = ch
+	cmd.Stderr = ch.Stderr()
 	cmd.SysProcAttr = newPipeSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
@@ -423,20 +425,15 @@ func (s *Service) startChild(ch ssh.Channel, cmd *exec.Cmd, st *sessionState, re
 		_, _ = io.Copy(stdin, ch)
 		_ = stdin.Close()
 	}()
-	outDone := make(chan struct{})
-	go func() {
-		defer close(outDone)
-		_, _ = io.Copy(ch, stdout)
-	}()
-	errDone := make(chan struct{})
-	go func() {
-		defer close(errDone)
-		_, _ = io.Copy(ch.Stderr(), stderr)
-	}()
+	// No drainDones for stdout/stderr: cmd.Wait() blocks until os/exec's
+	// internal copies from the child's stdout/stderr into ch/ch.Stderr()
+	// have completed, so by the time runChild's drain() is called there
+	// is nothing left to wait on for the non-PTY path. The 2 s drainCap
+	// backstop in spec §8.2 step 4 is effectively enforced by the
+	// surrounding ctx-driven select that bounds cmd.Wait().
 	return &childRunner{
-		cmd:        cmd,
-		pgid:       pgid,
-		drainDones: []chan struct{}{outDone, errDone},
+		cmd:  cmd,
+		pgid: pgid,
 	}, nil
 }
 

@@ -12,6 +12,10 @@ minisshd [--port N] [--bind IP] [--pass XXXXXX] [--user NAME] [--shell PATH] [--
 
 `MINISSHD_PASS` and `MINISSHD_USER` environment variables are honored when the matching flags are unset. If no password is configured, a fresh 6-digit numeric password is generated on startup and printed once to stdout — only after the listener has successfully bound.
 
+### Auto-start at login
+
+To run `minisshd` under launchd (macOS) or `systemd --user` (Linux), see the copy/paste templates in [`docs/examples/`](docs/examples/).
+
 ## Build and test
 
 ```

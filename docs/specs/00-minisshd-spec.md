@@ -306,6 +306,8 @@ If the user wants log persistence, the safe approach is to redirect *only* when 
 
 The directory itself is `0700`. The binary creates the directory and key files if they are missing on startup. If the directory exists with a wider mode, or the private key file exists with a wider mode, startup fails per §2 step 5 / §6.
 
+**Operator note (outside the runtime contract).** Example service-unit files for running `minisshd` under launchd (macOS) or `systemd --user` (Linux) live in `docs/examples/`. They are not loaded or referenced by the binary and are not part of the runtime contract; they are operator-facing templates only.
+
 ---
 
 ## 11. Error and edge cases
@@ -339,7 +341,8 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 - chroot / sandboxed SFTP.
 - Audit logging of session content (keystrokes, transferred files).
 - File-based logging, log rotation, log shipping, structured JSON output. Logs go to stdout; redirect if you need a file.
-- Daemonization or auto-start at login. Run it in a terminal or under your own process supervisor.
+- Daemonization or auto-start at login *implemented in the binary*. `minisshd` is supervisor-naive — it does not fork, detach, write a PID file, manage its own restarts, or hook itself into a service manager. Run it in a terminal or under your own process supervisor.
+- Operator escape hatch: copy/paste service-unit templates for launchd (macOS) and `systemd --user` (Linux) are provided in `docs/examples/`. The binary itself is unchanged. Operators using these templates must set `MINISSHD_PASS` (or one of the hardened credential mechanisms documented there) — running with an auto-generated password under a supervisor would capture each rotated password into the supervisor's log file, which §9 warns against.
 - Privileged operations or running as another user.
 - Windows support. macOS and Linux only.
 

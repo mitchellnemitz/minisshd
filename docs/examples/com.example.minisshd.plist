@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        minisshd LaunchAgent (per-user, not a privileged daemon).
+
+        Install to: ~/Library/LaunchAgents/com.<you>.minisshd.plist
+        Rename the file and the <Label> below to match your reverse-DNS prefix.
+
+        Before installing, edit every value marked REPLACE_ME below.
+
+        NOTE: launchd does NOT expand ~ or $HOME in plist path strings.
+        All REPLACE_ME_WITH_HOME values must be absolute paths (e.g. /Users/alice).
+
+        NOTE: XML-style comments like this one are valid and pass plutil -lint,
+        but are silently stripped by the `defaults` command. They survive
+        launchd and direct XML editing, but disappear if you round-trip
+        through the `defaults` tool.
+    -->
+
+    <key>Label</key>
+    <string>com.example.minisshd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>REPLACE_ME_WITH_ABSOLUTE_PATH_TO_BINARY</string>
+        <string>--bind</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>2222</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!--
+            MINISSHD_PASS and MINISSHD_USER are stored here in plaintext.
+            See docs/examples/README.md for the security tradeoff and
+            alternatives (Keychain, file with chmod 600, etc.).
+
+            WARNING: Do NOT leave REPLACE_ME_WITH_PASSWORD as-is.
+            The binary accepts ANY non-empty string as a password, including
+            the literal text "REPLACE_ME_WITH_PASSWORD".
+        -->
+        <key>MINISSHD_PASS</key>
+        <string>REPLACE_ME_WITH_PASSWORD</string>
+        <key>MINISSHD_USER</key>
+        <string>REPLACE_ME_WITH_USERNAME</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>REPLACE_ME_WITH_HOME/Library/Logs/minisshd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>REPLACE_ME_WITH_HOME/Library/Logs/minisshd.log</string>
+</dict>
+</plist>

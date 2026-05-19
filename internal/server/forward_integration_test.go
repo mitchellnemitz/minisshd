@@ -275,8 +275,16 @@ func TestIntegration_DirectTCPIP_PerConnectionCap(t *testing.T) {
 	ch4 := openDirectTCPIP(t, cli, echoHost, echoPort)
 	defer ch4.Close()
 
-	if !waitForLog(t, ts.logBuf, "forward-open", 2*time.Second) {
-		t.Fatalf("expected fresh forward-open after release; got:\n%s", ts.logBuf.String())
+	// waitForLog matches any substring occurrence, but the log already contains
+	// earlier forward-open lines from channels[0..2]. Poll for the COUNT to
+	// increase instead — the new forward-open is the one we care about, and
+	// under the race detector the emit can lag the OpenChannel return.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Count(ts.logBuf.String(), "forward-open") > openCountBefore {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	openCountAfter := strings.Count(ts.logBuf.String(), "forward-open")
 	if openCountAfter <= openCountBefore {

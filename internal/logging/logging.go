@@ -1,14 +1,17 @@
-// Package logging emits the structured logfmt events listed in spec §9 and
-// scrubs the configured password from every emitted line.
+// Package logging emits the structured events listed in spec §9 to stdout
+// in either logfmt (default) or JSON-Lines format, and scrubs the configured
+// password from every emitted line.
 //
-// Output format (spec §9):
+// Output formats (spec §9):
 //
-//	RFC3339-timestamp LEVEL event key=value key="value with spaces"
+//   - logfmt (default): RFC3339-timestamp LEVEL event key=value …
+//     Values are double-quoted when they contain whitespace, '=', '"', or are
+//     empty; otherwise bare. Inside quoted values, '"' and '\\' are
+//     backslash-escaped.
 //
-// Values are double-quoted when they contain whitespace, '=', '"', or are
-// empty; otherwise bare. Inside quoted values, '"' and '\\' are
-// backslash-escaped. IPv4 and IPv6 literals contain only characters that do
-// not trigger quoting and therefore appear unquoted.
+//   - json: one JSON object per line. Field names match the logfmt keys.
+//     See §9 for the full field-type table. The format is selected via
+//     --log-format / MINISSHD_LOG_FORMAT; use ParseFormat to resolve.
 //
 // The Logger performs a literal byte-level scrub of the configured password
 // from every line before it is written. The scrub is defense in depth — call
@@ -17,6 +20,7 @@ package logging
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
@@ -34,38 +38,101 @@ const (
 // password in an emitted line.
 const redacted = "[REDACTED]"
 
+// fieldKind encodes the semantic type of an event field so the JSON encoder
+// can emit numeric values without re-parsing the pre-stringified value.
+type fieldKind uint8
+
+const (
+	fieldString      fieldKind = iota
+	fieldInt                   // num holds the value; value holds decimal form for logfmt
+	fieldDurationSec           // dur holds the value; value holds Duration.String() for logfmt
+	fieldBool                  // reserved; no current event uses it
+)
+
+// field is one key/value pair in an event. value is the canonical string form
+// used by the logfmt encoder; kind/num/dur are consulted only by the JSON encoder.
+type field struct {
+	key   string
+	value string // canonical string form (used for logfmt and as fallback)
+	kind  fieldKind
+	num   int64         // populated when kind == fieldInt
+	dur   time.Duration // populated when kind == fieldDurationSec
+}
+
+// intField returns a field that emits as a JSON integer and a decimal logfmt value.
+func intField(key string, n int) field {
+	return field{key: key, kind: fieldInt, num: int64(n), value: itoa(n)}
+}
+
+// durField returns a field that emits as a JSON float-seconds and a logfmt Duration string.
+func durField(key string, d time.Duration) field {
+	return field{key: key, kind: fieldDurationSec, dur: d, value: d.String()}
+}
+
+// strField returns a string-typed field.
+func strField(key, v string) field {
+	return field{key: key, kind: fieldString, value: v}
+}
+
 // Logger emits the structured events defined in spec §9 to an underlying
 // writer, applying a password scrub as a defense-in-depth guard.
 //
 // All methods are safe for concurrent use.
 type Logger struct {
-	mu       sync.Mutex
-	w        io.Writer
-	password string // empty disables the scrub
-	now      func() time.Time
+	mu     sync.Mutex
+	w      io.Writer
+	scrubs [][]byte // raw password bytes, then JSON-encoded-inner form (if different)
+	now    func() time.Time
+	format Format
 }
 
-// New returns a Logger that writes events to w. password is the configured
-// password value; every occurrence of that exact byte sequence in an emitted
+// New returns a Logger that writes events to w in the specified format.
+// password is the configured password value; every occurrence of that exact
+// byte sequence (and its JSON-encoded form, for JSON output) in an emitted
 // line is replaced with "[REDACTED]" before the line is written. If password
 // is the empty string, no scrub is performed.
-func New(w io.Writer, password string) *Logger {
-	return &Logger{
-		w:        w,
-		password: password,
-		now:      time.Now,
+func New(w io.Writer, password string, format Format) *Logger {
+	l := &Logger{w: w, format: format, now: time.Now}
+	if password != "" {
+		l.scrubs = [][]byte{[]byte(password)}
+		// Also scrub the JSON-encoded inner form so passwords containing ",
+		// \, or controls cannot leak as their escaped form in JSON output.
+		if encoded, _ := json.Marshal(password); len(encoded) >= 2 {
+			// Strip the leading/trailing quote bytes — we want the inner
+			// escaped content, since string values appear inside quotes in
+			// the output. Only add if it differs from the raw form (i.e.
+			// the password contained an escapable byte).
+			inner := encoded[1 : len(encoded)-1]
+			if !bytes.Equal(inner, []byte(password)) {
+				l.scrubs = append(l.scrubs, inner)
+			}
+		}
 	}
+	return l
 }
 
-// field is one key=value pair in an event. value is the raw string; the
-// formatter decides quoting.
-type field struct {
-	key, value string
-}
-
-// emit serialises one event line and writes it through the scrub.
+// emit serialises one event line, runs the password scrub, and writes it.
 func (l *Logger) emit(level, event string, fields []field) {
 	var buf bytes.Buffer
+	switch l.format {
+	case FormatJSON:
+		l.encodeJSON(&buf, level, event, fields)
+	default:
+		l.encodeLogfmt(&buf, level, event, fields)
+	}
+	line := buf.Bytes()
+	if len(l.scrubs) > 0 {
+		for _, s := range l.scrubs {
+			line = bytes.ReplaceAll(line, s, []byte(redacted))
+		}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, _ = l.w.Write(line)
+}
+
+// encodeLogfmt writes the logfmt encoding of the event to buf.
+func (l *Logger) encodeLogfmt(buf *bytes.Buffer, level, event string, fields []field) {
 	buf.WriteString(l.now().Format(time.RFC3339))
 	buf.WriteByte(' ')
 	buf.WriteString(level)
@@ -75,18 +142,9 @@ func (l *Logger) emit(level, event string, fields []field) {
 		buf.WriteByte(' ')
 		buf.WriteString(f.key)
 		buf.WriteByte('=')
-		writeValue(&buf, f.value)
+		writeValue(buf, f.value)
 	}
 	buf.WriteByte('\n')
-
-	line := buf.Bytes()
-	if l.password != "" {
-		line = bytes.ReplaceAll(line, []byte(l.password), []byte(redacted))
-	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	_, _ = l.w.Write(line)
 }
 
 // writeValue appends value to buf, applying the §9 quoting rules.
@@ -135,34 +193,34 @@ func itoa(n int) string {
 // host-key fingerprint, expected username and PID.
 func (l *Logger) Listening(bind string, port int, fingerprint, user string, pid int) {
 	l.emit(levelInfo, "listening", []field{
-		{"bind", bind},
-		{"port", itoa(port)},
-		{"fingerprint", fingerprint},
-		{"user", user},
-		{"pid", itoa(pid)},
+		strField("bind", bind),
+		intField("port", port),
+		strField("fingerprint", fingerprint),
+		strField("user", user),
+		intField("pid", pid),
 	})
 }
 
 // ConnOpen emits the `conn-open` event (INFO).
 func (l *Logger) ConnOpen(remote string) {
 	l.emit(levelInfo, "conn-open", []field{
-		{"remote", remote},
+		strField("remote", remote),
 	})
 }
 
 // ConnClose emits the `conn-close` event (INFO).
 func (l *Logger) ConnClose(remote string, duration time.Duration) {
 	l.emit(levelInfo, "conn-close", []field{
-		{"remote", remote},
-		{"duration", duration.String()},
+		strField("remote", remote),
+		durField("duration", duration),
 	})
 }
 
 // AuthOK emits the `auth-ok` event (INFO).
 func (l *Logger) AuthOK(remote, user string) {
 	l.emit(levelInfo, "auth-ok", []field{
-		{"remote", remote},
-		{"user", user},
+		strField("remote", remote),
+		strField("user", user),
 	})
 }
 
@@ -171,19 +229,19 @@ func (l *Logger) AuthOK(remote, user string) {
 // failure; nextDelay is the sleep the next attempt from this IP will incur.
 func (l *Logger) AuthFail(remote, user, reason string, attempt int, nextDelay time.Duration) {
 	l.emit(levelWarn, "auth-fail", []field{
-		{"remote", remote},
-		{"user", user},
-		{"reason", reason},
-		{"attempt", itoa(attempt)},
-		{"next_delay", nextDelay.String()},
+		strField("remote", remote),
+		strField("user", user),
+		strField("reason", reason),
+		intField("attempt", attempt),
+		durField("next_delay", nextDelay),
 	})
 }
 
 // Session emits the `session` event (INFO). kind is "shell", "exec" or "sftp".
 func (l *Logger) Session(remote, kind string) {
 	l.emit(levelInfo, "session", []field{
-		{"remote", remote},
-		{"kind", kind},
+		strField("remote", remote),
+		strField("kind", kind),
 	})
 }
 
@@ -191,8 +249,8 @@ func (l *Logger) Session(remote, kind string) {
 // feature: "x11", "tcpip", "agent", "subsystem", "streamlocal", …
 func (l *Logger) Reject(remote, what string) {
 	l.emit(levelWarn, "reject", []field{
-		{"remote", remote},
-		{"what", what},
+		strField("remote", remote),
+		strField("what", what),
 	})
 }
 
@@ -200,9 +258,9 @@ func (l *Logger) Reject(remote, what string) {
 // "shutdown" or "channel-close" per spec §9.
 func (l *Logger) ShutdownSignal(pgid int, sig, reason string) {
 	l.emit(levelInfo, "shutdown-signal", []field{
-		{"pgid", itoa(pgid)},
-		{"sig", sig},
-		{"reason", reason},
+		intField("pgid", pgid),
+		strField("sig", sig),
+		strField("reason", reason),
 	})
 }
 
@@ -211,18 +269,18 @@ func (l *Logger) ShutdownSignal(pgid int, sig, reason string) {
 // delivered.
 func (l *Logger) DrainTimeout(remote, kind string, bytesDropped int) {
 	l.emit(levelWarn, "drain-timeout", []field{
-		{"remote", remote},
-		{"kind", kind},
-		{"bytes_dropped", itoa(bytesDropped)},
+		strField("remote", remote),
+		strField("kind", kind),
+		intField("bytes_dropped", bytesDropped),
 	})
 }
 
 // Error emits the `error` event (ERROR). remote may be empty, in which case
 // the field is omitted entirely.
 func (l *Logger) Error(message, remote string) {
-	fields := []field{{"message", message}}
+	fields := []field{strField("message", message)}
 	if remote != "" {
-		fields = append(fields, field{"remote", remote})
+		fields = append(fields, strField("remote", remote))
 	}
 	l.emit(levelError, "error", fields)
 }

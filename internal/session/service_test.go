@@ -23,7 +23,7 @@ func newTestService() (*Service, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
 	s := &Service{
 		Shell: "/bin/sh",
-		Log:   logging.New(buf, ""),
+		Log:   logging.New(buf, "", logging.FormatLogfmt),
 		hostEnv: func() []string {
 			return []string{
 				"HOME=/home/user",

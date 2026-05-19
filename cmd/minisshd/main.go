@@ -49,12 +49,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("minisshd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		port      = fs.Int("port", 2222, "TCP port to listen on")
-		bind      = fs.String("bind", "0.0.0.0", "IP address to bind to")
-		passFlag  = fs.String("pass", "", "Password clients must present (overrides MINISSHD_PASS)")
-		userFlag  = fs.String("user", "", "Username clients must present (overrides MINISSHD_USER)")
-		shellFlag = fs.String("shell", "", "Shell binary for interactive sessions")
-		hostKey   = fs.String("host-key", "", "Path to the persistent host key (default ~/.minisshd/host_key)")
+		port          = fs.Int("port", 2222, "TCP port to listen on")
+		bind          = fs.String("bind", "0.0.0.0", "IP address to bind to")
+		passFlag      = fs.String("pass", "", "Password clients must present (overrides MINISSHD_PASS)")
+		userFlag      = fs.String("user", "", "Username clients must present (overrides MINISSHD_USER)")
+		shellFlag     = fs.String("shell", "", "Shell binary for interactive sessions")
+		hostKey       = fs.String("host-key", "", "Path to the persistent host key (default ~/.minisshd/host_key)")
+		logFormatFlag = fs.String("log-format", "", "Structured-log format: logfmt (default) or json")
 	)
 	if err := fs.Parse(args); err != nil {
 		// flag.ContinueOnError already printed the usage to stderr.
@@ -64,7 +65,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// Distinguish "flag explicitly set" from "default" so an explicit
 	// --pass="" can be rejected per spec §2 step 2. flag.Visit only
 	// iterates flags that the user supplied.
-	var passSet, userSet, hostKeySet bool
+	var passSet, userSet, hostKeySet, logFormatSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "pass":
@@ -73,6 +74,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			userSet = true
 		case "host-key":
 			hostKeySet = true
+		case "log-format":
+			logFormatSet = true
 		}
 	})
 
@@ -105,6 +108,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitBadConfig
 	}
 	_ = userSet // accepted-but-unused; presence is implied by username != ""
+
+	// §2 step 3a — log format.
+	envFmt, envFmtSet := os.LookupEnv("MINISSHD_LOG_FORMAT")
+	logFormat, err := logging.ParseFormat(*logFormatFlag, logFormatSet, envFmt, envFmtSet)
+	if err != nil {
+		fmt.Fprintf(stderr, "minisshd: %v\n", err)
+		return exitBadConfig
+	}
 
 	// §2 step 4 — shell.
 	shellPath := *shellFlag
@@ -188,7 +199,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// password-scrub guard. Both must be ready before the first connection
 	// is accepted (§4).
 	creds := auth.NewCredentials(username, password)
-	logger := logging.New(stdout, password)
+	logger := logging.New(stdout, password, logFormat)
 
 	// §2 step 9 — log the listening event with the actually-bound port
 	// (so --port 0 still emits a meaningful number).

@@ -35,10 +35,11 @@ import (
 // need to customize user/password/shell/bind. Zero values fall back to
 // sensible defaults so most call sites can `startTestServer(t)`.
 type testServerOptions struct {
-	user     string
-	password string
-	shell    string
-	bind     string // empty -> 127.0.0.1
+	user      string
+	password  string
+	shell     string
+	bind      string // empty -> 127.0.0.1
+	logFormat logging.Format
 }
 
 // testServer is everything a §13.3 test needs to drive the in-process
@@ -94,7 +95,7 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	}
 
 	logBuf := &syncBuffer{}
-	logger := logging.New(logBuf, opts.password)
+	logger := logging.New(logBuf, opts.password, opts.logFormat)
 	creds := auth.NewCredentials(opts.user, opts.password)
 	limiter := ratelimit.New(ratelimit.RealClock{})
 

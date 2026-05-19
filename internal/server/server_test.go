@@ -58,7 +58,7 @@ func newTestServer(t *testing.T, ln net.Listener) *Server {
 		// SessionService is intentionally nil in tests — newWithDeps
 		// injects a stub sessionHandler so the field is unused.
 		SessionService: nil,
-		Log:            logging.New(&buf, "hunter2"),
+		Log:            logging.New(&buf, "hunter2", logging.FormatLogfmt),
 	}
 	return newWithDeps(cfg, &nopSession{})
 }

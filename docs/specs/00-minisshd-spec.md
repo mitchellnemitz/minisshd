@@ -34,6 +34,7 @@ minisshd [flags]
 | `--pass XXXXXX` | random 6-digit | Password clients must present. Any non-empty string accepted as an SSH password is valid. Overrides `MINISSHD_PASS` if both are set. If neither is set, a random 6-digit numeric password is generated and printed at startup. |
 | `--user NAME` | current OS user | Username clients must present. Overrides `MINISSHD_USER` if both are set. |
 | `--shell PATH` | `$SHELL` | Shell binary for interactive sessions. Falls back to `/bin/zsh` if `$SHELL` is unset. |
+| `--log-format FORMAT` | `logfmt` | Structured-log encoding. Valid values: `logfmt`, `json`. See §9. |
 | `--host-key PATH` | `~/.minisshd/host_key` | Path to the persistent host key. Generated on first run if missing. |
 
 ### Environment variables
@@ -42,6 +43,7 @@ minisshd [flags]
 |---|---|
 | `MINISSHD_PASS` | Password value. Used only if `--pass` is not provided. Preferred over `--pass` because command-line arguments are visible to any local user via `ps`; environment variables are less exposed (not visible in default `ps` output on macOS or Linux). |
 | `MINISSHD_USER` | Expected username. Used only if `--user` is not provided. |
+| `MINISSHD_LOG_FORMAT` | Log encoding. Used only if `--log-format` is not provided. Same valid values as the flag. |
 
 ### Startup validation
 
@@ -50,6 +52,7 @@ On startup the server must:
 1. Validate `--port`: must be an integer in `[0, 65535]`. The value `0` is permitted and means "ask the kernel for an ephemeral port" — used by tests. Otherwise fail with exit code 2.
 2. Resolve the user-supplied password: `--pass` if set, else `$MINISSHD_PASS`, else mark for generation in step 8. If a user-supplied value is the empty string, fail with exit code 2.
 3. Resolve the expected username: `--user` if set, else `$MINISSHD_USER`, else the OS username of the process owner (`$USER`, falling back to `getpwuid(getuid())`). Must be non-empty; otherwise fail with exit code 2.
+3a. Resolve `--log-format`: `--log-format` if set, else `$MINISSHD_LOG_FORMAT`, else `logfmt`. Reject any value other than `logfmt` or `json` with exit code 2 and a message naming the rejected value.
 4. Validate `--shell`: resolve the path with `stat` (following symlinks) and verify the final target exists, is a regular file, and is executable by the current user. A broken symlink, a directory, or a non-executable target all exit with code 2 and a message naming the resolved path that failed.
 5. Ensure `~/.minisshd/` exists with mode `0700`. If it exists with a wider mode, refuse to start with exit code 4 and instruct `chmod 700`.
 6. Load or generate the host key (see §6).
@@ -263,7 +266,63 @@ SSH clients may send `signal` channel requests to deliver a signal to a server-s
 
 ## 9. Logging
 
-Logs go to **stdout**, line-buffered. Format: one event per line, RFC3339 timestamp, level, event name, then space-separated `key=value` pairs (logfmt-compatible). Values are quoted with double quotes when they contain whitespace, `=`, `"`, or are empty; otherwise they appear bare. Inside quoted values, `"` and `\` are backslash-escaped. IPv4 and IPv6 literals contain no special characters under this rule and appear unquoted (e.g. `bind=0.0.0.0`, `bind=::`, `remote=[2001:db8::1]:51223`).
+Logs go to **stdout**, line-buffered. One event per line, terminated by a
+single `\n`. The encoding is selectable at startup via `--log-format`
+(`MINISSHD_LOG_FORMAT` env var); valid values are `logfmt` (default) and
+`json`. An unknown value causes startup to fail with exit code 2 and a
+message naming the rejected value.
+
+**`logfmt` (default):** RFC 3339 timestamp, level, event name, then
+space-separated `key=value` pairs. Values are quoted with double quotes when
+they contain whitespace, `=`, `"`, or are empty; otherwise they appear bare.
+Inside quoted values, `"` and `\` are backslash-escaped. IPv4 and IPv6
+literals contain no special characters under this rule and appear unquoted
+(e.g. `bind=0.0.0.0`, `bind=::`, `remote=[2001:db8::1]:51223`).
+
+**`json`:** one JSON object per line, encoded per RFC 8259, terminated by a
+single `\n` and no trailing whitespace. Field names match the logfmt keys
+exactly. Field types:
+- `ts` — RFC 3339 string with the same wire format as logfmt's leading
+  timestamp (e.g. `"2026-05-17T14:22:01-07:00"`). Always present and always
+  the first key in the JSON object (JSON ordering is stable by construction
+  of the encoder; logfmt does not make a field-ordering guarantee).
+- `level` — JSON string, one of `"INFO"`, `"WARN"`, `"ERROR"`. Always the
+  second key in the JSON object.
+- `event` — JSON string (e.g. `"listening"`, `"auth-fail"`). Always the
+  third key in the JSON object.
+- `bind`, `fingerprint`, `user`, `remote`, `reason`, `kind`, `what`, `sig`,
+  `message` — JSON string. RFC 8259 escaping applies (`"` → `\"`,
+  `\` → `\\`, control characters → `\uXXXX`).
+- `port`, `pid`, `attempt`, `pgid`, `bytes_dropped` — JSON integer.
+- `duration`, `next_delay` — JSON number, **seconds as a float** (e.g.
+  `27.0`, `1.5`, `0.001`). This replaces the logfmt `time.Duration.String()`
+  form because programmatic consumers benefit from a numeric type.
+- All other event-defined fields preserve the type categories above.
+
+Field ordering within a JSON object is stable across emissions: `ts`,
+`level`, `event` first in that order, then the event-specific fields in
+alphabetical order by key. JSON itself does not mandate ordering, but stable
+ordering keeps line-diff-based tests legible and is cheap to produce.
+
+In **both** formats, the password value must never appear in any structured
+log event. The `logging` package enforces this with a runtime byte-level
+substring replacement of the configured password with `[REDACTED]` applied
+to the fully-encoded line immediately before it is written. For JSON the
+substitution is safe under the following condition: the replacement string
+`[REDACTED]` contains no JSON-special characters, and the password — when
+embedded in a JSON string field — appears in its encoded form (with `"`,
+`\`, and controls already escaped). Replacing that encoded form with
+`[REDACTED]` yields a JSON string that is still well-formed, **provided the
+password does not contain structural JSON delimiter characters (`,`, `:`,
+`{`, `}`, `[`, `]`)**. Those characters appear verbatim inside JSON string
+values and also appear in the surrounding structural JSON. A password equal
+to, say, `","` would cause the scrub to replace delimiter characters,
+producing a malformed object. Operators must not configure such passwords
+when JSON output is selected. This is the same class of operator footgun
+that affects logfmt with passwords containing `=`, space, or `"`. Duration
+fields differ between formats: logfmt emits `time.Duration.String()` (e.g.
+`27s`); JSON emits float seconds (e.g. `27.0`). Both representations carry
+the same numeric value.
 
 ```
 2026-05-17T14:22:01-07:00 INFO  listening bind=0.0.0.0 port=2222 fingerprint=SHA256:abc… user=alice pid=4711
@@ -274,6 +333,20 @@ Logs go to **stdout**, line-buffered. Format: one event per line, RFC3339 timest
 2026-05-17T14:22:45-07:00 INFO  conn-close remote=192.168.1.42:51223 duration=27s
 2026-05-17T14:23:02-07:00 WARN  auth-fail  remote=10.0.0.5:55001 user=bob reason=bad-user attempt=1 next_delay=1s
 ```
+
+When `--log-format json` is in effect, the same events render as:
+
+```
+{"ts":"2026-05-17T14:22:01-07:00","level":"INFO","event":"listening","bind":"0.0.0.0","fingerprint":"SHA256:abc…","pid":4711,"port":2222,"user":"alice"}
+{"ts":"2026-05-17T14:22:18-07:00","level":"INFO","event":"conn-open","remote":"192.168.1.42:51223"}
+{"ts":"2026-05-17T14:22:18-07:00","level":"INFO","event":"auth-ok","remote":"192.168.1.42:51223","user":"alice"}
+{"ts":"2026-05-17T14:23:02-07:00","level":"WARN","event":"auth-fail","attempt":1,"next_delay":1.0,"reason":"bad-user","remote":"10.0.0.5:55001","user":"bob"}
+```
+
+The `Password: XXXXXX` banner described in §2 step 8 is **not** a structured
+log event. It is a one-shot human-readable line written directly to stdout
+from `cmd/minisshd/main.go` and is unaffected by `--log-format`. The banner
+appears verbatim in both formats' invocations.
 
 ### Required events
 
@@ -321,6 +394,7 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 | `~/.minisshd/` exists with mode wider than `0700` | Exit 4, instruct `chmod 700`. |
 | Password provided but empty | Exit 2, message to stderr. |
 | `--bind` value is not a valid IP literal | Exit 2, message to stderr naming the rejected value. |
+| `--log-format` value other than `logfmt` or `json` | Exit 2, message to stderr naming the rejected value. |
 | `--bind` address is not assigned to a local interface | Exit 3, message to stderr (`EADDRNOTAVAIL`). |
 | Port already in use | Exit 3, message to stderr. |
 | `~/.minisshd/host_key` is world-readable | Exit 4, instruct `chmod 600`. |
@@ -340,7 +414,7 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 - Port forwarding (local, remote, dynamic), agent forwarding, X11.
 - chroot / sandboxed SFTP.
 - Audit logging of session content (keystrokes, transferred files).
-- File-based logging, log rotation, log shipping, structured JSON output. Logs go to stdout; redirect if you need a file.
+- File-based logging, log rotation, log shipping. Logs go to stdout; redirect if you need a file. Structured JSON output **is** supported via `--log-format json` (§9) and is no longer a non-goal.
 - Daemonization or auto-start at login *implemented in the binary*. `minisshd` is supervisor-naive — it does not fork, detach, write a PID file, manage its own restarts, or hook itself into a service manager. Run it in a terminal or under your own process supervisor.
 - Operator escape hatch: copy/paste service-unit templates for launchd (macOS) and `systemd --user` (Linux) are provided in `docs/examples/`. The binary itself is unchanged. Operators using these templates must set `MINISSHD_PASS` (or one of the hardened credential mechanisms documented there) — running with an auto-generated password under a supervisor would capture each rotated password into the supervisor's log file, which §9 warns against.
 - Privileged operations or running as another user.
@@ -391,6 +465,7 @@ Each component is tested in isolation. At minimum:
 - `~/.minisshd/` pre-existing with mode `0755` exits 4 with a `chmod 700` message; mode `0700` is accepted and unchanged.
 - Banner: with `--pass hunter2`, captured stdout does **not** contain a `Password:` line. Same with `MINISSHD_PASS=hunter2` in the environment (no `--pass`). With no `--pass` and no `MINISSHD_PASS`, captured stdout contains exactly one `^Password: \d{6}$` line, *after* the listener has bound.
 - Banner-suppression on failure: with no `--pass` set and an intentionally bad `--bind 999.999.999.999`, the process exits non-zero and captured stdout is empty (the password is never generated, let alone printed).
+- `--log-format xml` exits 2 with a message naming the rejected value. `--log-format ""` (explicit empty) also exits 2. `--log-format json` and `--log-format logfmt` succeed. `MINISSHD_LOG_FORMAT=json` with no `--log-format` flag selects JSON.
 
 **`ratelimit`** (clock is injected for determinism)
 - `delay(0) == 0`, `delay(1) == 1s`, `delay(2) == 2s`, `delay(7) == 60s`, `delay(20) == 60s` (capped).
@@ -419,6 +494,9 @@ Each component is tested in isolation. At minimum:
 - Every event type matches `^\S+ (INFO|WARN|ERROR) +\S+ .*$`.
 - Password value never appears in any structured event, even when fed in via test fixtures (assert on full captured output).
 - `auth-fail` carries the correct `reason` field per call site.
+- Every existing logfmt envelope/quoting test has a JSON twin. The same event emitted via the JSON encoder is parsed back with `encoding/json` and asserted to carry the same field names and value types listed in §9.
+- JSON output is one well-formed JSON object per line. `json.Unmarshal` succeeds for every emitted line under each event method.
+- Password scrub for JSON: when the configured password contains a JSON metacharacter (test case: `"hello"world`), the encoded line is still well-formed JSON after the scrub, and the literal password byte sequence does not appear anywhere in the output.
 
 ### 13.3 Integration tests
 
@@ -442,6 +520,7 @@ Required scenarios:
 - **`shell` without prior `pty-req`** (matches the §8 combinations table): write a `.zprofile` sentinel and a `.zshrc` sentinel. Open a session channel, skip `pty-req`, send `shell`, then send `exit\n` on the channel data stream. Captured output must contain the `.zprofile` marker (login shell loaded it) and must NOT contain the `.zshrc` marker (not interactive).
 - **IPv4-mapped IPv6 normalization (§5):** start the server with `--bind ::` (dual-stack). Make a single IPv4 connection from `127.0.0.1` and fail auth once. On a dual-stack listener that IPv4 connection arrives at the SSH layer with remote address `::ffff:127.0.0.1`. The rate-limiter must expose a way to inspect its current state (e.g. a `Snapshot()` method returning a `map[string]int` of `key → fail_count`; the same surface is useful for an eventual admin endpoint and so is not test-only). Assert: (a) the snapshot contains the key `127.0.0.1` (the normalized form) and not `::ffff:127.0.0.1` — proving normalization happened; (b) `fail_count == 1` under that key. Then make a second IPv4 connection from `127.0.0.1` and fail again; assert the count under `127.0.0.1` is now 2. For comparison, make a connection from `::1` (pure IPv6 loopback) and fail; assert it occupies a *separate* key `::1` with `fail_count == 1`.
 - **`exec` with prior `pty-req`** (`ssh -t host CMD` shape): write a `.zshrc` sentinel. Open a session channel, send `pty-req`, then `exec 'echo DONE'`. Captured output must contain the `.zshrc` marker (PTY → interactive) and `DONE`. Verify the spawned process saw `TERM` in its environment (echo it via the exec command and assert).
+- **End-to-end log capture in JSON mode.** Start the test server with `logFormat: logging.FormatJSON`, drive one good auth and one bad auth, capture stdout, split on `\n`, `json.Unmarshal` each line, assert the expected sequence of events (`conn-open`, `auth-ok`, `conn-close`, `auth-fail`) each appear at least once with the expected field structure.
 
 ### 13.4 End-to-end tests
 

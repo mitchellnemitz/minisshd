@@ -2,6 +2,7 @@ package logging
 
 import (
 	"bytes"
+	"encoding/json"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,10 +16,15 @@ import (
 var eventLineRE = regexp.MustCompile(`^\S+ (INFO|WARN|ERROR) +\S+ .*$`)
 
 // newTestLogger returns a Logger whose buffer the caller can inspect. The
-// clock is frozen for stable test output.
+// clock is frozen for stable test output. The format defaults to FormatLogfmt.
 func newTestLogger(password string) (*Logger, *bytes.Buffer) {
+	return newTestLoggerFmt(password, FormatLogfmt)
+}
+
+// newTestLoggerFmt returns a Logger with the specified format.
+func newTestLoggerFmt(password string, format Format) (*Logger, *bytes.Buffer) {
 	buf := &bytes.Buffer{}
-	l := New(buf, password)
+	l := New(buf, password, format)
 	l.now = func() time.Time {
 		return time.Date(2026, 5, 17, 14, 22, 1, 0, time.UTC)
 	}
@@ -161,6 +167,161 @@ func TestEnvelopes(t *testing.T) {
 	}
 }
 
+// TestEnvelopes_JSON is the JSON twin of TestEnvelopes. For each event it
+// asserts the emitted line parses as JSON with the expected fields and types.
+func TestEnvelopes_JSON(t *testing.T) {
+	cases := []struct {
+		name        string
+		wantEvent   string
+		wantKeys    []string // all must appear in the parsed object
+		wantIntKeys []string // these must have float64 type (JSON numbers)
+		wantDurKeys []string // duration keys — must be float64 in JSON
+		emit        func(l *Logger)
+	}{
+		{
+			name:        "listening",
+			wantEvent:   "listening",
+			wantKeys:    []string{"ts", "level", "event", "bind", "port", "fingerprint", "user", "pid"},
+			wantIntKeys: []string{"port", "pid"},
+			emit: func(l *Logger) {
+				l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+			},
+		},
+		{
+			name:      "conn-open",
+			wantEvent: "conn-open",
+			wantKeys:  []string{"ts", "level", "event", "remote"},
+			emit: func(l *Logger) {
+				l.ConnOpen("192.168.1.42:51223")
+			},
+		},
+		{
+			name:        "conn-close",
+			wantEvent:   "conn-close",
+			wantKeys:    []string{"ts", "level", "event", "remote", "duration"},
+			wantDurKeys: []string{"duration"},
+			emit: func(l *Logger) {
+				l.ConnClose("192.168.1.42:51223", 27*time.Second)
+			},
+		},
+		{
+			name:      "auth-ok",
+			wantEvent: "auth-ok",
+			wantKeys:  []string{"ts", "level", "event", "remote", "user"},
+			emit: func(l *Logger) {
+				l.AuthOK("192.168.1.42:51223", "alice")
+			},
+		},
+		{
+			name:        "auth-fail",
+			wantEvent:   "auth-fail",
+			wantKeys:    []string{"ts", "level", "event", "remote", "user", "reason", "attempt", "next_delay"},
+			wantIntKeys: []string{"attempt"},
+			wantDurKeys: []string{"next_delay"},
+			emit: func(l *Logger) {
+				l.AuthFail("10.0.0.5:55001", "bob", "bad-user", 1, time.Second)
+			},
+		},
+		{
+			name:      "session",
+			wantEvent: "session",
+			wantKeys:  []string{"ts", "level", "event", "remote", "kind"},
+			emit: func(l *Logger) {
+				l.Session("192.168.1.42:51223", "shell")
+			},
+		},
+		{
+			name:      "reject",
+			wantEvent: "reject",
+			wantKeys:  []string{"ts", "level", "event", "remote", "what"},
+			emit: func(l *Logger) {
+				l.Reject("192.168.1.42:51223", "tcpip")
+			},
+		},
+		{
+			name:        "shutdown-signal",
+			wantEvent:   "shutdown-signal",
+			wantKeys:    []string{"ts", "level", "event", "pgid", "sig", "reason"},
+			wantIntKeys: []string{"pgid"},
+			emit: func(l *Logger) {
+				l.ShutdownSignal(4733, "HUP", "channel-close")
+			},
+		},
+		{
+			name:        "drain-timeout",
+			wantEvent:   "drain-timeout",
+			wantKeys:    []string{"ts", "level", "event", "remote", "kind", "bytes_dropped"},
+			wantIntKeys: []string{"bytes_dropped"},
+			emit: func(l *Logger) {
+				l.DrainTimeout("192.168.1.42:51223", "shell", 1024)
+			},
+		},
+		{
+			name:      "error-with-remote",
+			wantEvent: "error",
+			wantKeys:  []string{"ts", "level", "event", "message", "remote"},
+			emit: func(l *Logger) {
+				l.Error("boom", "192.168.1.42:51223")
+			},
+		},
+		{
+			name:      "error-without-remote",
+			wantEvent: "error",
+			wantKeys:  []string{"ts", "level", "event", "message"},
+			emit: func(l *Logger) {
+				l.Error("boom", "")
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l, buf := newTestLoggerFmt("", FormatJSON)
+			tc.emit(l)
+			line := lastLine(t, buf)
+
+			var m map[string]any
+			if err := json.Unmarshal([]byte(line), &m); err != nil {
+				t.Fatalf("json.Unmarshal failed: %v\nline: %q", err, line)
+			}
+
+			// Check all expected keys are present.
+			for _, k := range tc.wantKeys {
+				if _, ok := m[k]; !ok {
+					t.Errorf("missing key %q in JSON: %s", k, line)
+				}
+			}
+
+			// Check event name.
+			if got, _ := m["event"].(string); got != tc.wantEvent {
+				t.Errorf("event=%q want %q", got, tc.wantEvent)
+			}
+
+			// Check integer keys have float64 type (JSON number).
+			for _, k := range tc.wantIntKeys {
+				v, ok := m[k]
+				if !ok {
+					continue
+				}
+				if _, ok := v.(float64); !ok {
+					t.Errorf("key %q: want float64 (JSON number), got %T", k, v)
+				}
+			}
+
+			// Check duration keys have float64 type.
+			for _, k := range tc.wantDurKeys {
+				v, ok := m[k]
+				if !ok {
+					continue
+				}
+				if _, ok := v.(float64); !ok {
+					t.Errorf("duration key %q: want float64 (JSON number), got %T", k, v)
+				}
+			}
+		})
+	}
+}
+
 // TestErrorOmitsEmptyRemote asserts that the `remote` field is dropped
 // entirely when Error is called with an empty remote.
 func TestErrorOmitsEmptyRemote(t *testing.T) {
@@ -284,7 +445,7 @@ func TestConcurrentEmission(t *testing.T) {
 	const perGoroutine = 20
 
 	buf := &bytes.Buffer{}
-	l := New(buf, "")
+	l := New(buf, "", FormatLogfmt)
 	// Real clock here — the test only checks line shape, not timestamps.
 
 	var wg sync.WaitGroup
@@ -323,5 +484,278 @@ func TestEnvelopeShape(t *testing.T) {
 	const wantPrefix = "2026-05-17T14:22:01Z INFO listening "
 	if !strings.HasPrefix(line, wantPrefix) {
 		t.Errorf("prefix mismatch:\ngot  %q\nwant prefix %q", line, wantPrefix)
+	}
+}
+
+// ---- JSON-specific tests ----
+
+// TestJSONEnvelope_FieldOrder asserts that the JSON output begins with
+// {"ts":... and that ts, level, event come first in that order.
+func TestJSONEnvelope_FieldOrder(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+	line := lastLine(t, buf)
+	if !strings.HasPrefix(line, `{"ts":`) {
+		t.Errorf("JSON line should begin with {\"ts\":, got: %q", line)
+	}
+	// Verify level comes before event in the raw string.
+	levelIdx := strings.Index(line, `"level":`)
+	eventIdx := strings.Index(line, `"event":`)
+	if levelIdx < 0 || eventIdx < 0 || levelIdx >= eventIdx {
+		t.Errorf("expected \"level\" before \"event\" in: %q", line)
+	}
+	// After the envelope, event-specific fields should be alphabetical.
+	// For listening: bind, fingerprint, pid, port, user
+	bindIdx := strings.Index(line, `"bind":`)
+	fpIdx := strings.Index(line, `"fingerprint":`)
+	pidIdx := strings.Index(line, `"pid":`)
+	portIdx := strings.Index(line, `"port":`)
+	userIdx := strings.Index(line, `"user":`)
+	if bindIdx < 0 || fpIdx < 0 || pidIdx < 0 || portIdx < 0 || userIdx < 0 {
+		t.Fatalf("missing expected fields in: %q", line)
+	}
+	if !(bindIdx < fpIdx && fpIdx < pidIdx && pidIdx < portIdx && portIdx < userIdx) {
+		t.Errorf("event-specific fields not in alphabetical order in: %q", line)
+	}
+}
+
+// TestJSONEnvelope_TrailingNewline asserts every emitted JSON line ends with
+// exactly one newline.
+func TestJSONEnvelope_TrailingNewline(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.ConnOpen("1.2.3.4:5")
+	l.AuthOK("1.2.3.4:5", "alice")
+	out := buf.String()
+	if !strings.HasSuffix(out, "\n") {
+		t.Fatalf("output does not end with newline: %q", out)
+	}
+	// Each line (split on \n) except the final empty string should be
+	// valid JSON.
+	parts := strings.Split(out, "\n")
+	for _, p := range parts[:len(parts)-1] {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(p), &m); err != nil {
+			t.Errorf("line is not valid JSON: %q", p)
+		}
+	}
+}
+
+// TestJSON_ErrorOmitsEmptyRemote mirrors TestErrorOmitsEmptyRemote for JSON.
+func TestJSON_ErrorOmitsEmptyRemote(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.Error("disk full", "")
+	line := lastLine(t, buf)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if _, ok := m["remote"]; ok {
+		t.Errorf("expected no remote key, got: %s", line)
+	}
+	if _, ok := m["message"]; !ok {
+		t.Errorf("expected message key, got: %s", line)
+	}
+}
+
+// TestJSON_StringEscape verifies that special characters in string fields
+// round-trip correctly through JSON encoding.
+func TestJSON_StringEscape(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.AuthOK("1.2.3.4:5", `user"with quote`)
+	line := lastLine(t, buf)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v\nline: %q", err, line)
+	}
+	if got, _ := m["user"].(string); got != `user"with quote` {
+		t.Errorf("user field round-trip failed: got %q", got)
+	}
+}
+
+// TestJSON_DurationAsFloatSeconds asserts that duration fields are emitted
+// as float seconds, not as a time.Duration.String() form.
+func TestJSON_DurationAsFloatSeconds(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.ConnClose("1.2.3.4:5", 1500*time.Millisecond)
+	line := lastLine(t, buf)
+	var m map[string]any
+	if err := json.Unmarshal([]byte(line), &m); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	dur, ok := m["duration"].(float64)
+	if !ok {
+		t.Fatalf("duration field is not a float64, got %T: %v", m["duration"], m["duration"])
+	}
+	if dur != 1.5 {
+		t.Errorf("duration = %v, want 1.5", dur)
+	}
+}
+
+// TestJSON_DurationWholeSecondsHasDecimal asserts that whole-second durations
+// are emitted with a ".0" suffix for visual distinction from integer counters.
+func TestJSON_DurationWholeSecondsHasDecimal(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.ConnClose("1.2.3.4:5", 1*time.Second)
+	line := lastLine(t, buf)
+	if !strings.Contains(line, `"duration":1.0`) {
+		t.Errorf("expected \"duration\":1.0 in: %q", line)
+	}
+}
+
+// TestJSON_LineIsValidJSON exhaustively calls every event method and asserts
+// each emitted line is valid JSON.
+func TestJSON_LineIsValidJSON(t *testing.T) {
+	l, buf := newTestLoggerFmt("", FormatJSON)
+	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+	l.ConnOpen("1.2.3.4:5")
+	l.ConnClose("1.2.3.4:5", time.Second)
+	l.AuthOK("1.2.3.4:5", "alice")
+	l.AuthFail("1.2.3.4:5", "bob", "bad-password", 2, 2*time.Second)
+	l.Session("1.2.3.4:5", "shell")
+	l.Reject("1.2.3.4:5", "x11")
+	l.ShutdownSignal(1234, "HUP", "channel-close")
+	l.DrainTimeout("1.2.3.4:5", "exec", 512)
+	l.Error("something went wrong", "1.2.3.4:5")
+	l.Error("global error", "")
+
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Errorf("line %d is not valid JSON: %q — %v", i, line, err)
+		}
+	}
+}
+
+// ---- JSON password scrub tests ----
+
+// TestJSON_ScrubWithQuoteInPassword is the load-bearing test: a password
+// containing a double-quote must not leak in its raw or JSON-escaped form.
+func TestJSON_ScrubWithQuoteInPassword(t *testing.T) {
+	const pw = "\"hello\"world" // contains literal double-quotes
+	l, buf := newTestLoggerFmt(pw, FormatJSON)
+
+	l.Listening(pw, 2222, pw, pw, 1)
+	l.ConnOpen(pw)
+	l.ConnClose(pw, time.Second)
+	l.AuthOK(pw, pw)
+	l.AuthFail(pw, pw, pw, 1, time.Second)
+	l.Session(pw, pw)
+	l.Reject(pw, pw)
+	l.ShutdownSignal(1, pw, pw)
+	l.DrainTimeout(pw, pw, 0)
+	l.Error(pw, pw)
+
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+
+	// Every line must be valid JSON.
+	for i, line := range lines {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Errorf("line %d is not valid JSON after scrub: %q — %v", i, line, err)
+		}
+	}
+
+	// Raw password must not appear.
+	if strings.Contains(out, pw) {
+		t.Fatalf("raw password leaked in output:\n%s", out)
+	}
+	// JSON-encoded inner form must not appear.
+	encodedInner := `\"hello\"world`
+	if strings.Contains(out, encodedInner) {
+		t.Fatalf("JSON-encoded password form leaked in output:\n%s", out)
+	}
+	// [REDACTED] must appear.
+	if !strings.Contains(out, redacted) {
+		t.Errorf("expected %q replacement in output:\n%s", redacted, out)
+	}
+}
+
+// TestJSON_ScrubWithBackslashInPassword tests that passwords containing a
+// backslash are scrubbed in both raw and encoded form.
+func TestJSON_ScrubWithBackslashInPassword(t *testing.T) {
+	const pw = `back\slash`
+	l, buf := newTestLoggerFmt(pw, FormatJSON)
+
+	l.AuthOK(pw, pw)
+	l.Error(pw, pw)
+
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Errorf("line %d not valid JSON: %q — %v", i, line, err)
+		}
+	}
+	if strings.Contains(out, pw) {
+		t.Fatalf("raw password leaked:\n%s", out)
+	}
+	// Encoded form is back\\slash.
+	encodedInner := `back\\slash`
+	if strings.Contains(out, encodedInner) {
+		t.Fatalf("encoded password leaked:\n%s", out)
+	}
+	if !strings.Contains(out, redacted) {
+		t.Errorf("expected %q in output", redacted)
+	}
+}
+
+// TestJSON_ScrubWithControlCharInPassword tests passwords containing a
+// literal newline byte.
+func TestJSON_ScrubWithControlCharInPassword(t *testing.T) {
+	pw := "hi\nbye"
+	l, buf := newTestLoggerFmt(pw, FormatJSON)
+
+	l.AuthOK("1.2.3.4:5", pw)
+
+	out := buf.String()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Errorf("line %d not valid JSON: %q — %v", i, line, err)
+		}
+	}
+	if strings.Contains(out, pw) {
+		t.Fatalf("raw password leaked:\n%s", out)
+	}
+	if !strings.Contains(out, redacted) {
+		t.Errorf("expected %q in output", redacted)
+	}
+}
+
+// TestLogfmt_PasswordScrubUnchanged is a regression guard: with the new
+// scrubs [][]byte field, the existing logfmt password-scrub behavior must
+// be byte-for-byte identical to the old l.password string field approach.
+func TestLogfmt_PasswordScrubUnchanged(t *testing.T) {
+	const pw = "hunter2"
+	l, buf := newTestLoggerFmt(pw, FormatLogfmt)
+
+	l.Listening(pw, 2222, pw, pw, 1)
+	l.ConnOpen(pw)
+	l.ConnClose(pw, time.Second)
+	l.AuthOK(pw, pw)
+	l.AuthFail(pw, pw, pw, 1, time.Second)
+	l.Session(pw, pw)
+	l.Reject(pw, pw)
+	l.ShutdownSignal(1, pw, pw)
+	l.DrainTimeout(pw, pw, 0)
+	l.Error(pw, pw)
+
+	out := buf.String()
+	if strings.Contains(out, pw) {
+		t.Fatalf("password leaked into logfmt output:\n%s", out)
+	}
+	if !strings.Contains(out, redacted) {
+		t.Errorf("expected %q in logfmt output:\n%s", redacted, out)
+	}
+	// Verify logfmt shape is preserved (each line matches the envelope regex).
+	for i, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if !eventLineRE.MatchString(line) {
+			t.Errorf("line %d does not match envelope regex: %q", i, line)
+		}
 	}
 }

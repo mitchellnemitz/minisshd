@@ -15,5 +15,8 @@
 .idea/
 .vscode/
 
+# Claude Code: keep shared .claude/ checked in, ignore per-user overrides
+/.claude/settings.local.json
+
 # macOS
 .DS_Store

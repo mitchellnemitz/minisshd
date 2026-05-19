@@ -832,3 +832,96 @@ func TestLogfmt_PasswordScrubUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestLogger_ForwardOpenFormatting(t *testing.T) {
+	l, buf := newTestLogger("")
+	l.ForwardOpen("1.2.3.4:5678", "192.168.1.1", 8080, "10.0.0.1", 54321)
+	line := lastLine(t, buf)
+
+	if !strings.Contains(line, "forward-open") {
+		t.Errorf("event name missing: %q", line)
+	}
+	for _, want := range []string{
+		"remote=1.2.3.4:5678",
+		"dest_host=192.168.1.1",
+		"dest_port=8080",
+		"originator_host=10.0.0.1",
+		"originator_port=54321",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing %q in: %q", want, line)
+		}
+	}
+	if !strings.Contains(line, "INFO") {
+		t.Errorf("expected INFO level in: %q", line)
+	}
+}
+
+func TestLogger_ForwardCloseFormatting(t *testing.T) {
+	l, buf := newTestLogger("")
+	l.ForwardClose("1.2.3.4:5678", "192.168.1.1", 8080, 1234, 5678, 500*time.Millisecond)
+	line := lastLine(t, buf)
+
+	if !strings.Contains(line, "forward-close") {
+		t.Errorf("event name missing: %q", line)
+	}
+	for _, want := range []string{
+		"remote=1.2.3.4:5678",
+		"dest_host=192.168.1.1",
+		"dest_port=8080",
+		"bytes_in=1234",
+		"bytes_out=5678",
+		"duration=",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing %q in: %q", want, line)
+		}
+	}
+	if !strings.Contains(line, "INFO") {
+		t.Errorf("expected INFO level in: %q", line)
+	}
+}
+
+func TestLogger_ForwardRejectFormatting(t *testing.T) {
+	l, buf := newTestLogger("")
+	l.ForwardReject("1.2.3.4:5678", "192.168.1.1", 8080, "over-cap")
+	line := lastLine(t, buf)
+
+	if !strings.Contains(line, "forward-reject") {
+		t.Errorf("event name missing: %q", line)
+	}
+	for _, want := range []string{
+		"remote=1.2.3.4:5678",
+		"dest_host=192.168.1.1",
+		"dest_port=8080",
+		"reason=over-cap",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("missing %q in: %q", want, line)
+		}
+	}
+	if !strings.Contains(line, "WARN") {
+		t.Errorf("expected WARN level in: %q", line)
+	}
+}
+
+// TestLogger_ForwardEventsScrubPassword asserts that the password value never
+// appears in forward-open, forward-close, or forward-reject lines even when
+// it is passed as a field value (defense-in-depth: the scrub covers all emits).
+func TestLogger_ForwardEventsScrubPassword(t *testing.T) {
+	const pw = "s3cr3t"
+	l, buf := newTestLogger(pw)
+
+	// Pass the password as field values so the scrub must fire.
+	l.ForwardOpen(pw, pw, 9999, pw, 0)
+	l.ForwardClose(pw, pw, 9999, 0, 0, time.Second)
+	l.ForwardReject(pw, pw, 9999, pw)
+
+	out := buf.String()
+	if strings.Contains(out, pw) {
+		t.Fatalf("password %q leaked into forward event output:\n%s", pw, out)
+	}
+	if !strings.Contains(out, redacted) {
+		t.Errorf("expected %q redaction marker in output:\n%s", redacted, out)
+	}
+}

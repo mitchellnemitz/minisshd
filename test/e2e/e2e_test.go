@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -240,19 +241,84 @@ func TestE2E_PubkeyOnlyFails(t *testing.T) {
 	}
 }
 
-// §13.4 #8: Port forwarding rejected.
+// §13.4 #8: Reverse (server-side) port forwarding rejected.
+// -R (forwarded-tcpip) is not supported; the server must log reject what=tcpip.
+// -L (direct-tcpip) is now accepted — tested separately below.
 func TestE2E_PortForwardingRejected(t *testing.T) {
 	requireSSHClients(t)
 	srv := spawnServer(t, spawnOptions{})
 	defer srv.stop()
 
 	host, port := splitAddr(t, srv.addr)
-	localPort := "18080"
+	remotePort := strconv.Itoa(nextFreePort(t))
 	args := []string{"/usr/bin/ssh"}
 	args = append(args, sshOpts()...)
 	args = append(args,
 		"-N",
-		"-L", localPort+":127.0.0.1:1",
+		"-R", remotePort+":127.0.0.1:1",
+		"-p", port, srv.user+"@"+host)
+
+	cmd := exec.Command(args[0], args[1:]...)
+	ptmx, err := startPTY(cmd)
+	if err != nil {
+		t.Fatalf("start ssh -R: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		_ = ptmx.Close()
+	}()
+	// Feed password to the ssh -R prompt.
+	go drainPTYAndFeedPassword(ptmx, srv.password)
+
+	// The server logs auth-ok as soon as authentication succeeds, then
+	// rejects the tcpip-forward global request. Wait for auth-ok first so
+	// we know the session is established.
+	if !srv.awaitLogContains(t, "auth-ok", 10*time.Second) {
+		t.Fatalf("expected auth-ok in server log; tail:\n%s", srv.readLog(t))
+	}
+	if !srv.awaitLogContains(t, "what=tcpip", 5*time.Second) {
+		t.Fatalf("expected `reject what=tcpip` in server log; tail:\n%s", srv.readLog(t))
+	}
+}
+
+// §13.4 #11: Local port forwarding (ssh -L) end-to-end.
+// Starts a TCP echo server, forwards a local port through minisshd to it,
+// sends data, and asserts the echo comes back.
+func TestE2E_LocalPortForwarding(t *testing.T) {
+	requireSSHClients(t)
+
+	// Start a TCP echo server that mirrors anything sent to it.
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	defer echoLn.Close()
+	go func() {
+		for {
+			c, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_, _ = io.Copy(c, c)
+			}(c)
+		}
+	}()
+	echoAddr := echoLn.Addr().(*net.TCPAddr)
+
+	srv := spawnServer(t, spawnOptions{})
+	defer srv.stop()
+
+	host, port := splitAddr(t, srv.addr)
+	localPort := strconv.Itoa(nextFreePort(t))
+
+	args := []string{"/usr/bin/ssh"}
+	args = append(args, sshOpts()...)
+	args = append(args,
+		"-N",
+		"-L", localPort+":127.0.0.1:"+strconv.Itoa(echoAddr.Port),
 		"-p", port, srv.user+"@"+host)
 
 	cmd := exec.Command(args[0], args[1:]...)
@@ -265,33 +331,183 @@ func TestE2E_PortForwardingRejected(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 		_ = ptmx.Close()
 	}()
-	// Feed password to ssh -L (it prompts).
 	go drainPTYAndFeedPassword(ptmx, srv.password)
 
-	// Wait for the local listener to be ready by polling
-	// 127.0.0.1:localPort.
+	// Wait for the local forwarded port to be bound by the ssh client.
 	if err := awaitPort("127.0.0.1:"+localPort, 10*time.Second); err != nil {
-		t.Fatalf("ssh -L did not bind local port: %v", err)
+		t.Fatalf("ssh -L did not bind local port within 10 s: %v", err)
 	}
 
-	// Dial the local forwarded port; the connection succeeds at the
-	// local level but the server rejects the direct-tcpip channel-open,
-	// so the connection should close immediately / return EOF.
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+localPort, 2*time.Second)
+	// Dial the local forward and send a message.
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+localPort, 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial local forward: %v", err)
 	}
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buf := make([]byte, 16)
-	_, err = conn.Read(buf)
-	// EOF or "broken pipe" or "connection reset" — any non-data outcome is OK.
-	if err == nil {
-		t.Logf("WARN: expected EOF after rejected channel-open; got data")
+
+	const msg = "hello-e2e-forward\n"
+	if _, err := io.WriteString(conn, msg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_ = conn.(*net.TCPConn).CloseWrite()
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(conn)
+	if err != nil && err.Error() != "EOF" {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != msg {
+		t.Fatalf("echo mismatch: sent %q got %q", msg, got)
 	}
 
-	if !srv.awaitLogContains(t, "what=tcpip", 3*time.Second) {
-		t.Fatalf("expected `reject what=tcpip` in server log; tail:\n%s", srv.readLog(t))
+	if !srv.awaitLogContains(t, "forward-open", 3*time.Second) {
+		t.Fatalf("expected forward-open in server log; tail:\n%s", srv.readLog(t))
+	}
+	if !srv.awaitLogContains(t, "forward-close", 5*time.Second) {
+		t.Fatalf("expected forward-close in server log; tail:\n%s", srv.readLog(t))
+	}
+}
+
+// §13.4 #12: Local port forwarding cap enforced via --forward-max 1.
+//
+// Uses a SINGLE ssh process with two -L flags so both local-port listeners
+// share the same SSH connection (and therefore the same forwardCounter on the
+// server). The precise sequence (plan §7.6 step 1-6):
+//
+//  1. Start a TCP echo server.
+//  2. Pick L1 and L2. Spawn ONE ssh -N -L L1:echo -L L2:echo --forward-max 1.
+//  3. Open a TCP connection to L1 and hold it open (occupies the single slot).
+//  4. Open a TCP connection to L2; the server rejects the direct-tcpip channel
+//     (same SSH session, cap already full) → L2 conn gets EOF/RST immediately.
+//  5. Assert reason=over-cap appears in the server log (hard failure).
+//  6. Close conn1 (releasing the slot). A fresh connection to L1 must succeed,
+//     proving counter.Release fires correctly.
+func TestE2E_LocalPortForwardingCap(t *testing.T) {
+	requireSSHClients(t)
+
+	// Start a TCP echo server.
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	defer echoLn.Close()
+	go func() {
+		for {
+			c, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				_, _ = io.Copy(c, c)
+			}(c)
+		}
+	}()
+	echoPort := echoLn.Addr().(*net.TCPAddr).Port
+
+	srv := spawnServer(t, spawnOptions{
+		extraArgs: []string{"--forward-max", "1"},
+	})
+	defer srv.stop()
+
+	host, port := splitAddr(t, srv.addr)
+	localPort1 := strconv.Itoa(nextFreePort(t))
+	localPort2 := strconv.Itoa(nextFreePort(t))
+
+	// Step 2: single ssh process with two -L flags — both listeners share the
+	// same SSH connection and therefore the same forwardCounter on the server.
+	args := []string{"/usr/bin/ssh"}
+	args = append(args, sshOpts()...)
+	args = append(args,
+		"-N",
+		"-L", localPort1+":127.0.0.1:"+strconv.Itoa(echoPort),
+		"-L", localPort2+":127.0.0.1:"+strconv.Itoa(echoPort),
+		"-p", port, srv.user+"@"+host)
+	cmd := exec.Command(args[0], args[1:]...)
+	ptmx, err := startPTY(cmd)
+	if err != nil {
+		t.Fatalf("start ssh -L: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		_ = ptmx.Close()
+	}()
+	go drainPTYAndFeedPassword(ptmx, srv.password)
+
+	// Both local listeners must be bound before we proceed.
+	if err := awaitPort("127.0.0.1:"+localPort1, 10*time.Second); err != nil {
+		t.Fatalf("ssh -L did not bind L1: %v", err)
+	}
+	if err := awaitPort("127.0.0.1:"+localPort2, 10*time.Second); err != nil {
+		t.Fatalf("ssh -L did not bind L2: %v", err)
+	}
+
+	// Step 3: open a connection to L1 and hold it open — this triggers the
+	// first direct-tcpip channel-open, which should succeed and occupy the slot.
+	conn1, err := net.DialTimeout("tcp", "127.0.0.1:"+localPort1, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial forward L1: %v", err)
+	}
+	// conn1 is closed explicitly in step 6 below.
+
+	// Wait for the server to record the successful forward-open before
+	// attempting the second one.
+	if !srv.awaitLogContains(t, "forward-open", 5*time.Second) {
+		t.Fatalf("expected forward-open for L1 in server log; tail:\n%s", srv.readLog(t))
+	}
+
+	// Step 4: open a connection to L2; because conn1 still holds the slot,
+	// the server must reject this second direct-tcpip channel-open (same SSH
+	// session, cap=1 already consumed) → conn2 gets EOF/RST.
+	conn2, err := net.DialTimeout("tcp", "127.0.0.1:"+localPort2, 5*time.Second)
+	if err != nil {
+		// The local port may refuse if ssh already gave up — also acceptable.
+		t.Logf("dial forward L2 failed immediately (also acceptable): %v", err)
+	} else {
+		defer conn2.Close()
+		_ = conn2.SetReadDeadline(time.Now().Add(3 * time.Second))
+		buf := make([]byte, 16)
+		_, readErr := conn2.Read(buf)
+		// Fix 3: hard failure if data arrives (cap was not enforced).
+		if readErr == nil {
+			t.Fatal("expected EOF on cap-exceeded forward (L2); got data — cap not enforced")
+		}
+	}
+
+	// Step 5: assert over-cap was logged (hard failure).
+	if !srv.awaitLogContains(t, "reason=over-cap", 5*time.Second) {
+		t.Fatalf("expected reason=over-cap in server log; tail:\n%s", srv.readLog(t))
+	}
+
+	// Step 6: close conn1 to release the slot, then verify a fresh connection
+	// to L1 succeeds, proving counter.Release fires correctly.
+	conn1.Close()
+
+	// Wait for forward-close to appear (slot released).
+	if !srv.awaitLogContains(t, "forward-close", 5*time.Second) {
+		t.Fatalf("expected forward-close after closing conn1; tail:\n%s", srv.readLog(t))
+	}
+
+	conn3, err := net.DialTimeout("tcp", "127.0.0.1:"+localPort1, 5*time.Second)
+	if err != nil {
+		t.Fatalf("expected fresh connection to L1 to succeed after slot release; got: %v", err)
+	}
+	defer conn3.Close()
+
+	// Send a small echo to confirm the channel is actually live.
+	const probe = "probe-after-release\n"
+	if _, err := io.WriteString(conn3, probe); err != nil {
+		t.Fatalf("write probe: %v", err)
+	}
+	_ = conn3.(*net.TCPConn).CloseWrite()
+	_ = conn3.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := io.ReadAll(conn3)
+	if err != nil && err.Error() != "EOF" {
+		t.Fatalf("read probe echo: %v", err)
+	}
+	if string(got) != probe {
+		t.Fatalf("probe echo mismatch after slot release: sent %q got %q", probe, string(got))
 	}
 }
 

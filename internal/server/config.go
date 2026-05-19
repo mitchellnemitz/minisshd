@@ -96,4 +96,9 @@ type Config struct {
 	// KeysetSource holds the atomic accepted-public-keys source. Nil when
 	// publickey auth is not configured.
 	KeysetSource *auth.KeysetSource
+	// ForwardMax is the per-connection cap on concurrent direct-tcpip
+	// channels. 0 disables local forwarding entirely. Validation lives in
+	// cmd/minisshd (§2 step 10); the server treats whatever value is handed
+	// to it as truth.
+	ForwardMax int
 }

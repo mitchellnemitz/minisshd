@@ -38,6 +38,7 @@ minisshd [flags]
 | `--host-key PATH` | `~/.minisshd/host_key` | Path to the persistent host key. Generated on first run if missing. |
 | `--auth METHODS` | `password` | Comma-separated SSH auth methods to advertise. Valid values: `password`, `publickey`, `password,publickey`, `publickey,password`. Whitespace around items is trimmed. Duplicate items are an error. Empty string or an unknown method is an error. |
 | `--authorized-keys PATH` | `$XDG_CONFIG_HOME/minisshd/authorized_keys` (else `~/.config/minisshd/authorized_keys`) | Path to the OpenSSH-format authorized-keys file. Read only when `--auth` includes `publickey`. A missing file is treated as zero accepted keys (with a single `WARN` log at startup); a present-but-unreadable file is a startup error. |
+| `--forward-max N` | `32` | Maximum concurrent `direct-tcpip` (local port forward) channels per SSH connection. `0` disables forwarding entirely. Negative values are an error. |
 
 ### Environment variables
 
@@ -48,6 +49,7 @@ minisshd [flags]
 | `MINISSHD_LOG_FORMAT` | Log encoding. Used only if `--log-format` is not provided. Same valid values as the flag. |
 | `MINISSHD_AUTH` | Comma-separated auth methods. Used only if `--auth` is not provided. Same value grammar as `--auth`. |
 | `MINISSHD_AUTHORIZED_KEYS` | Authorized-keys file path. Used only if `--authorized-keys` is not provided. |
+| `MINISSHD_FORWARD_MAX` | Forwarded-channel cap. Used only if `--forward-max` is not provided. Same range and semantics as the flag. |
 
 ### Startup validation
 
@@ -69,6 +71,7 @@ On startup the server must:
 7. Parse `--bind` as a textual IP literal (`net.ParseIP` in Go); fail with exit code 2 if invalid. Bind to `<bind>:<port>` — formatted as `bind:port` for IPv4 and `[bind]:port` for IPv6. On `EADDRINUSE` fail with exit code 3 and a clear message. On `EADDRNOTAVAIL` (the address isn't assigned to any local interface) fail with exit code 3 and a clear message naming the address.
 8. **Only after the listener is successfully bound**, if no password was resolved in step 2, generate a fresh 6-digit numeric password using a cryptographically secure RNG (`crypto/rand` in Go) and print exactly one line to stdout: `Password: 482910`. This is the only path that writes the password to stdout. If a password was supplied via flag or env, no banner is printed. **A random password is only generated when the resolved `--auth` set includes `password` and no password was supplied; in `publickey`-only mode no password is generated and no banner is printed.**
 9. Log a single structured `listening` event including the bind address, the **actually bound port** (which may differ from `--port` when `--port 0` was requested — read it from the listener's local address after bind), host key fingerprint, expected username, PID, the configured auth method list, and the count of accepted public keys. The new fields are named `auth_methods` (e.g. `auth_methods=password,publickey`) and `pubkey_count` (an integer; 0 when publickey is not configured).
+10. Validate `--forward-max`: parse as a non-negative integer; reject negatives with exit code 2 and a message naming the rejected value. A missing value falls back to `MINISSHD_FORWARD_MAX`, then to the default `32`. The resolved value is cached on the server config and consulted in §7.1 step 2. (This validation runs before the listener bind — same group as step 1 — so a misconfiguration cannot produce a password banner.)
 
 The ordering matters for security: the password banner is printed only when the server is guaranteed to actually start. Any earlier failure exits before the banner runs.
 
@@ -78,7 +81,7 @@ The ordering matters for security: the password banner is printed only when the 
 
 By default the listener binds to `0.0.0.0`, so the server is reachable from the LAN over IPv4. Pass `--bind 127.0.0.1` to restrict it to IPv4 loopback, or a specific interface address to limit it further. For IPv6, use `--bind ::` to accept both IPv6 and IPv4-mapped clients (the implementation must explicitly set `IPV6_V6ONLY = 0` on the listening socket; the OS default varies and isn't safe to rely on), or `--bind ::1` for IPv6 loopback only. A single `--bind` value produces a single listening socket; if you need both pure-IPv4 and pure-IPv6 on the same port, run two instances. No firewall manipulation is performed; the user is responsible for any host firewall configuration (pf or Application Firewall on macOS, iptables/nftables/ufw on Linux).
 
-The server must not be exposed to the public internet by design — this is called out in the README — but no code-level check enforces this.
+The server must not be exposed to the public internet by design — this is called out in the README — but no code-level check enforces this. With local port forwarding now supported (§7.1), an authenticated client can also reach any host:port the server process can reach on the network. Treat the SSH server's network access as the operator's network access — use `--bind 127.0.0.1` to restrict the listening interface to loopback for single-host work, and cap concurrent forwards per connection with `--forward-max`.
 
 ---
 
@@ -270,19 +273,70 @@ The server must implement enough of the protocol to satisfy these client invocat
 | `sftp host` | `session` | `subsystem sftp` | Hand the channel to an SFTP server implementation rooted at `/`. |
 | `scp` (modern) | `session` | `subsystem sftp` | Modern OpenSSH `scp` (9.0+, default on macOS Sonoma and recent Linux distros) uses SFTP. Works via the SFTP subsystem above. |
 | `scp -O` (legacy) | `session` | `exec scp …` | Legacy `scp` invoked with `-O` runs a remote `scp` binary. Works via the `exec` path. |
+| `ssh -L LOCAL:host:port host` | `direct-tcpip` | (none — channel open carries the payload) | Parse the RFC 4254 §7.2 channel-open payload, dial `host:port` over TCP with a 10 s timeout, then pipe bytes channel↔TCP bidirectionally until either side closes. Subject to the per-connection cap of §7.1 below. See §7.1 for the channel-open payload format, lifecycle, and failure modes. |
 
 The following must be **explicitly rejected** with a `ChannelOpenFailure` or request reject:
 
-- `direct-tcpip` (local port forwarding)
-- `forwarded-tcpip` / `tcpip-forward` (remote port forwarding)
+- `forwarded-tcpip` / `tcpip-forward` / `cancel-tcpip-forward` (remote port forwarding)
 - `direct-streamlocal@openssh.com`, `streamlocal-forward@openssh.com` (Unix-socket forwarding)
 - `auth-agent-req@openssh.com` (agent forwarding)
 - `x11-req` (X11 forwarding)
 - Any subsystem name other than exactly `sftp` (case-sensitive, no leading/trailing whitespace). `SFTP`, `Sftp`, ` sftp`, `sftp-server` all rejected.
 
+### 7.1 `direct-tcpip` (local port forwarding)
+
+When the client sends a `direct-tcpip` channel-open the server:
+
+1. Parses the channel-open `ExtraData` per RFC 4254 §7.2:
+   - dest-host (string)
+   - dest-port (uint32, must be in [1, 65535])
+   - originator-host (string)
+   - originator-port (uint32)
+
+   A malformed payload (truncated, trailing garbage, dest-port == 0 or > 65535)
+   is rejected with reason `ConnectionFailed` and the message
+   `"malformed direct-tcpip payload"`. The server logs `forward-reject
+   reason=malformed-payload` (see §9).
+
+2. Checks the per-connection forwarded-channel cap. The default cap is 32;
+   override with `--forward-max N` (`MINISSHD_FORWARD_MAX=N` if the flag
+   is unset). `N == 0` disables forwarding entirely (channel-open rejected
+   with `Prohibited` and reason `over-cap`); `N < 0` is rejected at startup
+   with exit code 2. If the connection already holds `N` open forwarded
+   channels, the new request is rejected with `Prohibited`, message
+   `"too many concurrent forwards"`, and the server logs `forward-reject
+   reason=over-cap`. Closed forwards free a slot.
+
+3. Dials `dest-host:dest-port` via `net.Dialer{}.DialContext` with a 10 s
+   timeout and the per-connection context. DNS resolution uses the host
+   resolver; IP literals (both IPv4 and IPv6) are dialed directly. On
+   dial failure (refused, timeout, no such host, route unreachable) the
+   server rejects the channel with `ConnectionFailed`, message
+   `"dial failed: <error>"`, and logs `forward-reject reason=dial-failed`.
+
+4. On success: accept the channel, discard any per-channel requests (none
+   are defined for `direct-tcpip`; reply false to anything that arrives
+   with `want_reply = true`), and run two copy goroutines:
+   - channel → TCP (use the TCP half-close on EOF via `CloseWrite()`)
+   - TCP → channel (call `channel.CloseWrite()` on EOF)
+
+   When both copies complete, close the channel and the TCP socket fully
+   and log `forward-close` with the byte counts and the wall-clock
+   duration.
+
+The server does not honor any destination-policy restriction in this
+release. The operator-trust model of §3 still applies: do not expose the
+server to networks where the set of reachable destinations is part of
+the threat model.
+
+`direct-tcpip` channels do not carry `exit-status` or `exit-signal`. The
+§8 exit-status semantics apply to session channels only.
+
 ---
 
 ## 8. Session handling
+
+`direct-tcpip` channels (§7.1) are not session channels and are not subject to anything in this section, including the exit-status/exit-signal delivery in §8.1 step 6 / §8.2 step 5.
 
 ### Request-type combinations
 
@@ -452,9 +506,12 @@ appears verbatim in both formats' invocations.
 | `auth-ok` | INFO | remote, user, method (`password` / `publickey`), fingerprint (publickey only; SHA-256 of the presented key in `SHA256:<base64>` form, identical to `ssh-keygen -lf`). For `method=password` the fingerprint field is omitted. |
 | `auth-fail` | WARN | remote, user, method (`password` / `publickey`), reason (`bad-user` / `bad-password` / `bad-key`), attempt (per-IP cumulative `fail_count` after this failure), next_delay (sleep that the next attempt from this IP will incur), fingerprint (publickey only; SHA-256 of the *presented* key, identical to `ssh-keygen -lf`; omitted for `method=password`). |
 | `session` | INFO | remote, kind (`shell` / `exec` / `sftp`) |
-| `reject` | WARN | remote, what (`x11`, `tcpip`, `agent`, `subsystem`, `streamlocal`, etc.) |
+| `reject` | WARN | remote, what (`x11`, `tcpip`, `agent`, `subsystem`, `streamlocal`, …). `tcpip` covers only reverse forwarding (`tcpip-forward` / `cancel-tcpip-forward` / `forwarded-tcpip`); local forwarding is logged via the `forward-*` events. |
 | `shutdown-signal` | INFO | pgid (process group ID receiving the signal), sig (POSIX signal name, e.g. `HUP` or `KILL`), reason (`shutdown` for server SIGINT/SIGTERM path, `channel-close` for client disconnect). Emitted every time the server sends a signal to a child process group. Lets tests verify signal delivery timing without racing the kernel. |
 | `drain-timeout` | WARN | remote, kind (`shell` / `exec`), bytes_dropped. Emitted when post-exit output drain exceeds the 2 s cap (§8.1 step 5 / §8.2 step 4). Indicates the PTY or pipes didn't close cleanly after child exit. |
+| `forward-open`   | INFO | remote, dest_host, dest_port, originator_host, originator_port |
+| `forward-close`  | INFO | remote, dest_host, dest_port, bytes_in, bytes_out, duration |
+| `forward-reject` | WARN | remote, dest_host, dest_port, reason (`malformed-payload` / `dial-failed` / `over-cap`) |
 | `pubkey-option-ignored` | WARN | path (file), line (1-based line number), option (e.g. `command="..."`). Emitted once per options-bearing line at startup and at every reload. |
 | `pubkey-parse-error` | WARN | path, line, error |
 | `pubkey-keys-missing` | WARN | path. Emitted once at startup if publickey is configured and the file is absent. |
@@ -500,6 +557,10 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 | `~/.minisshd/host_key` exists but is unparseable (corrupt) | Exit 4, message naming the unreadable path. Does not silently regenerate. |
 | `--host-key` parent directory missing or not writable | Exit 4, message naming the missing/unwritable directory. |
 | Client requests unsupported channel/subsystem | Reject the request, log `reject`, keep the connection open. |
+| `direct-tcpip` payload is malformed | Reject the channel with `ConnectionFailed`, log `forward-reject reason=malformed-payload`, keep the connection open. |
+| `direct-tcpip` dial fails (refused, timeout, DNS, unreachable) | Reject the channel with `ConnectionFailed`, log `forward-reject reason=dial-failed`, keep the connection open. |
+| `direct-tcpip` exceeds `--forward-max` per connection | Reject the channel with `Prohibited`, log `forward-reject reason=over-cap`, keep the connection open. |
+| `--forward-max` < 0 | Exit 2 with a message naming the rejected value. |
 | Client offers a non-password auth method | Server advertises only `password`; clients negotiate down. |
 | PTY allocation fails | Reject the `pty-req`, keep the channel; client can still use `exec`. |
 | Child shell fails to spawn | Send `exit-status` 127, log an `error`, close the channel. |
@@ -517,7 +578,7 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 
 - Public-internet exposure.
 - Multiple users, SSH certificates, or 2FA. (Public-key auth alongside password is supported per §4; certificate-based auth, certificate authorities, and OpenSSH `cert-authority` directives remain out of scope. Multi-user mappings — different keys to different system users — are also out of scope; minisshd always runs as the invoking user, and the configured username gates all auth methods.)
-- Port forwarding (local, remote, dynamic), agent forwarding, X11.
+- Port forwarding (remote, dynamic), agent forwarding, X11. Local forwarding (`ssh -L`, `direct-tcpip`) is supported — see §7.1.
 - chroot / sandboxed SFTP.
 - Audit logging of session content (keystrokes, transferred files).
 - File-based logging, log rotation, log shipping. Logs go to stdout; redirect if you need a file. Structured JSON output **is** supported via `--log-format json` (§9) and is no longer a non-goal.
@@ -603,7 +664,8 @@ Each component is tested in isolation. At minimum:
 
 **`server` / `session`**
 - Env-var filter accepts `LANG`, `LC_ALL`, `LC_TIME`; rejects `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `PATH`, `HOME`, arbitrary keys.
-- `direct-tcpip`, `forwarded-tcpip`, `direct-streamlocal@openssh.com`, and `streamlocal-forward@openssh.com` channel-opens are all rejected.
+- Unit tests must assert that the following are rejected by the channel dispatcher: `forwarded-tcpip`, `direct-streamlocal@openssh.com`, `streamlocal-forward@openssh.com`, `auth-agent-req@openssh.com`, `x11-req`, and unknown channel types. (`direct-tcpip` is no longer rejected; the unit test that previously asserted its rejection is renamed and now covers `forwarded-tcpip` / `streamlocal` rejections only.)
+- `forwarded-tcpip`, `direct-streamlocal@openssh.com`, and `streamlocal-forward@openssh.com` channel-opens are rejected.
 - Global requests `tcpip-forward` and `cancel-tcpip-forward` are rejected.
 - Session requests `x11-req`, `auth-agent-req@openssh.com`, and `subsystem` for anything other than `sftp` are rejected.
 - `window-change` request resizes the PTY (asserted against a mock ioctl).
@@ -632,7 +694,7 @@ Required scenarios:
 - Rate-limit state is shared across reconnects from one IP: fire 5 failed attempts (separate connections), then a 6th with the correct credentials. After the 5th failure `fail_count` is 5, so the delay before the 6th attempt's password callback is `2^(5-1) = 16 s`. Measure wall-clock time from the start of the 6th TCP connection to the `auth-ok` log entry. It must be within `[13 s, 21 s]` (16 s ±20% gives [12.8, 19.2]; add up to ~1 s for the handshake and ~1 s for general jitter on shared CI). The rate-limiter is given a real clock here, not an injected one.
 - Successful-auth reset (end-to-end): after the test above, immediately open a 7th connection with correct credentials. Wall-clock time from connection start to `auth-ok` must be < 1 s (no backoff delay). This proves the success in attempt 6 reset the counter for that IP.
 - 20 concurrent connections each running a short exec command all succeed.
-- Server rejects `direct-tcpip` channel opens.
+- Server rejects `forwarded-tcpip` channel opens (and `direct-tcpip` channels that exceed the per-connection cap).
 - Server rejects `x11-req` on a session channel.
 - **Interactive shell loads `~/.zshrc`**: with `HOME=t.TempDir()` and `--shell /bin/zsh`, write `echo MINISSHD_RC_LOADED_$$` into `$HOME/.zshrc`, open a session channel, request a PTY, send `shell`, send `exit\n`, read all output → captured output must contain `MINISSHD_RC_LOADED_` followed by the child PID. Also write a sentinel into `$HOME/.zprofile` (`echo MINISSHD_PROFILE_LOADED`) and confirm both markers appear, in `.zprofile`-then-`.zshrc` order.
 - **Exec does not load `~/.zshrc`**: same setup as above (sentinels in `.zshrc` and `.zprofile`), but instead of `shell` send `exec 'echo CMD_OUTPUT'`. Captured stdout must equal `"CMD_OUTPUT\n"` exactly — the `.zshrc` and `.zprofile` markers must **not** appear. A `.zshenv` sentinel written in the same test, by contrast, **must** appear (zsh sources `.zshenv` even for `-c`).
@@ -648,6 +710,14 @@ Required scenarios:
 - **Fingerprint format**: the `fingerprint` field in `auth-ok` for a publickey auth equals `ssh.FingerprintSHA256(pub)` for the presented key.
 - **MaxAuthTries combined counter**: server with both methods; a client probing 3 wrong keys (rejected-key queries) then 3 wrong passwords accumulates exactly 6 `auth-fail` events, after which the connection is closed.
 - **Pubkey failure feeds rate limiter**: 5 failed connections (wrong key) from the same IP cause exponential backoff observable on the 6th connection (skipped under `-short`).
+- **Local port forwarding succeeds:** stand up a TCP echo server on `127.0.0.1:0` inside the test, open a `direct-tcpip` channel through the SSH connection with its address as dest, write a random payload through the channel, assert the echoed bytes come back. Confirm the server log contains `forward-open` and `forward-close` events.
+- **Local port forwarding dial failure:** open `direct-tcpip` to a port that is not listening (bind a listener, close it, reuse the port). Assert `OpenChannel` returns `*ssh.OpenChannelError` with reason `ConnectionFailed` and the server log contains `forward-reject reason=dial-failed`.
+- **`direct-tcpip` malformed payload:** open `direct-tcpip` with a truncated payload (e.g. 4 random bytes) and assert the channel-open is rejected and the server log contains `forward-reject reason=malformed-payload`.
+- **Per-connection forward cap:** start the server with `forwardMax: 2`, open two `direct-tcpip` channels (kept open), then attempt a third. The third must be rejected with `Prohibited`, and the server log must contain `forward-reject reason=over-cap`.
+- **TCP close triggers channel EOF:** open a `direct-tcpip` to a TCP server that writes data then closes; assert the SSH channel returns EOF with the same bytes.
+- **Channel close triggers TCP close:** send data through a `direct-tcpip` channel then close it; assert the TCP server side receives EOF with the sent bytes.
+- **Forwarding disabled when ForwardMax=0:** server with `disableForwarding: true`; every `direct-tcpip` channel open is rejected with `Prohibited` and `forward-reject reason=over-cap`.
+- **Reverse and streamlocal still rejected (regression):** the existing `TestIntegration_RejectsForwardedTCPIP` and streamlocal rejection tests remain in place as regression guards.
 
 ### 13.4 End-to-end tests
 
@@ -673,7 +743,7 @@ All tests start the server with `--user testuser` unless a test explicitly varie
 5. **Wrong username** — `ssh wronguser@…` with correct password → exits non-zero; server log contains `auth-fail reason=bad-user`.
 6. **Wrong password** — three wrong passwords → ssh exits with `Permission denied`; server log contains three `reason=bad-password` entries.
 7. **Pubkey-only fails** — `-o PreferredAuthentications=publickey -o PasswordAuthentication=no` → exits non-zero.
-8. **Port forwarding rejected** — start `ssh -p PORT -N -L 18080:127.0.0.1:1 testuser@127.0.0.1` as a background process. Wait for the SSH session to establish by polling the local forwarded port `127.0.0.1:18080` with 100 ms `net.DialTimeout` attempts until one returns no error (the local listener only opens after ssh has authenticated and the channel-multiplexer is ready); fail the test if the poll doesn't succeed within 10 s. Once established, open a fresh `net.DialTimeout` connection to `127.0.0.1:18080` with a 2 s timeout; the connect must succeed at the local level but the connection must return EOF or close immediately (because the server rejects the `direct-tcpip` channel-open). The server log must contain `reject what=tcpip`. Terminate the background ssh process at the end of the test.
+8. **Reverse port forwarding rejected** — start `ssh -p PORT -N -R <remotePort>:127.0.0.1:1 testuser@127.0.0.1` under a PTY. Wait for `auth-ok` to appear in the server log (so the session is established). Assert the server log contains `reject what=tcpip` (the `-R` flag triggers a `tcpip-forward` global request, which the server still rejects). Terminate the background ssh process at the end of the test. This test covers reverse (still rejected) forwarding; local (`-L`) forwarding is tested in test #11 below.
 9. **Backoff observable** — open 5 separate TCP connections sequentially, each with exactly 1 wrong-password attempt before disconnecting. Total elapsed wall-clock time (from start of connection 1 to disconnect of connection 5) must be ≥ 1+2+4+8 = 15 s (allow ±20%). Each connection's auth happens after the per-IP lock acquires and the configured delay passes.
 10. **Auto-generated password** — start binary with no `--pass` and no `MINISSHD_PASS`; parse the `Password: \d{6}` line from stdout; that password authenticates.
 11. **Configured username variance** — restart the server with `--user alice` (overriding the default `testuser`): `ssh alice@127.0.0.1` works, `ssh testuser@127.0.0.1` fails with `reason=bad-user`. This proves `--user` actually changes the expected name (rather than being ignored or always falling back to the OS user).
@@ -683,6 +753,8 @@ All tests start the server with `--user testuser` unless a test explicitly varie
 15. **Bind to loopback** — start with `--bind 127.0.0.1`. (a) `ssh -p PORT testuser@127.0.0.1` succeeds. (b) Pick a non-loopback IPv4 address by enumerating interfaces (`net.InterfaceAddrs` in Go); skip the test if none is available (CI sometimes has only loopback). (c) `ssh -p PORT testuser@<non-loopback-ip>` must fail with a connection error (TCP refused or timeout — not a Permission denied), proving the bind restriction holds at the kernel level.
 16. **Invalid bind address** — start with `--bind not-an-ip`, assert exit 2 with a clear stderr message naming the rejected value.
 17. **Pubkey auth** — generate an Ed25519 keypair; write the public key to a temp `authorized_keys` file; start the server with `--auth publickey --authorized-keys <path>`; connect with `ssh -i <privkey> -o BatchMode=yes -o IdentitiesOnly=yes -o PreferredAuthentications=publickey` and assert the connection succeeds and server log contains `method=publickey`. Also verify that a connection with a *different* (unregistered) key fails and the log contains `reason=bad-key`. Additionally verify that when both `password,publickey` methods are configured, a pubkey client authenticates via `method=publickey`.
+18. **Local port forwarding (`ssh -L`)** — start a TCP echo server inside the test on `127.0.0.1:0`. Spawn `ssh -p PORT -N -L <localPort>:127.0.0.1:<echoPort> testuser@127.0.0.1` under a PTY. Poll until the local port is bound. Dial the local forwarded address, write a known message, half-close the write side, read back the echoed bytes, and assert they match. Assert the server log contains `forward-open` and `forward-close` events.
+19. **Local port forwarding cap (`--forward-max 1`)** — start the server with `--forward-max 1`. Open one SSH client connection with `-L <localPort1>:...`. Keep one local TCP connection alive (holding the slot). Open a second `-L <localPort2>:...` on a new SSH connection. Dial `localPort2`; the connection must close immediately (the server rejects the channel with `Prohibited`). Assert the server log contains `reason=over-cap`.
 
 ### 13.5 Coverage
 

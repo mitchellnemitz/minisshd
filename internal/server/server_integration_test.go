@@ -209,37 +209,41 @@ func TestIntegration_TwentyConcurrentExecs(t *testing.T) {
 	}
 }
 
-func TestIntegration_RejectsDirectTCPIP(t *testing.T) {
+// TestIntegration_RejectsForwardedTCPIP asserts that the server rejects
+// forwarded-tcpip (server-side / reverse forwarding) with Prohibited and logs
+// "reject what=tcpip". direct-tcpip is now handled (it routes to the forward
+// handler), so this test only covers forwarded-tcpip.
+func TestIntegration_RejectsForwardedTCPIP(t *testing.T) {
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
 	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
 	defer cli.Close()
 
-	// direct-tcpip payload: originator host/port + dest host/port.
-	type directTCPIPPayload struct {
-		DestAddr   string
-		DestPort   uint32
-		OriginAddr string
-		OriginPort uint32
+	// forwarded-tcpip payload per RFC 4254 §7.2.
+	type forwardedTCPIPPayload struct {
+		ConnectedAddr string
+		ConnectedPort uint32
+		OriginAddr    string
+		OriginPort    uint32
 	}
-	payload := ssh.Marshal(&directTCPIPPayload{
-		DestAddr:   "127.0.0.1",
-		DestPort:   80,
-		OriginAddr: "127.0.0.1",
-		OriginPort: 12345,
+	payload := ssh.Marshal(&forwardedTCPIPPayload{
+		ConnectedAddr: "127.0.0.1",
+		ConnectedPort: 80,
+		OriginAddr:    "127.0.0.1",
+		OriginPort:    12345,
 	})
 
-	_, _, err := cli.OpenChannel("direct-tcpip", payload)
+	_, _, err := cli.OpenChannel("forwarded-tcpip", payload)
 	if err == nil {
-		t.Fatalf("expected direct-tcpip OpenChannel to fail")
+		t.Fatalf("expected forwarded-tcpip OpenChannel to fail")
 	}
 	var ocErr *ssh.OpenChannelError
 	if !errors.As(err, &ocErr) {
 		t.Fatalf("expected *ssh.OpenChannelError, got %T (%v)", err, err)
 	}
 	if ocErr.Reason != ssh.Prohibited {
-		t.Logf("got reason=%v (expected Prohibited or similar)", ocErr.Reason)
+		t.Logf("got reason=%v (expected Prohibited)", ocErr.Reason)
 	}
 	if !waitForLog(t, ts.logBuf, "reject", 2*time.Second) ||
 		!strings.Contains(ts.logBuf.String(), "what=tcpip") {

@@ -36,6 +36,30 @@ func NewCredentials(user, password string) *Credentials {
 	}
 }
 
+// CheckUsername returns (ok, reason) for the publickey path. Only the
+// username comparison runs; the caller is responsible for combining this
+// result with the keyset check. Reason is "" on match, ReasonBadUser otherwise.
+//
+// The hash-then-compare approach is identical to Check: SHA-256 over the
+// presented username is compared to the cached digest with
+// subtle.ConstantTimeCompare. This keeps the timing envelope consistent
+// regardless of username length.
+func (c *Credentials) CheckUsername(presentedUser string) (ok bool, reason string) {
+	return c.checkUsernameWith(presentedUser, constantTimeCompare)
+}
+
+// checkUsernameWith is the seam used by tests to inject a counting wrapper and
+// assert that exactly one ConstantTimeCompare call occurs per CheckUsername
+// invocation (the username-digest comparison; no password comparison).
+func (c *Credentials) checkUsernameWith(presentedUser string, cmp func(a, b []byte) int) (bool, string) {
+	presentedUserHash := sha256.Sum256([]byte(presentedUser))
+	userMatch := cmp(presentedUserHash[:], c.userHash[:])
+	if userMatch == 1 {
+		return true, ""
+	}
+	return false, ReasonBadUser
+}
+
 // Check compares presented credentials against the cached digests with
 // constant-time primitives. Both comparisons always run — there is no
 // early return between them — and the results are combined with a

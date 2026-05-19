@@ -35,11 +35,13 @@ import (
 // need to customize user/password/shell/bind. Zero values fall back to
 // sensible defaults so most call sites can `startTestServer(t)`.
 type testServerOptions struct {
-	user      string
-	password  string
-	shell     string
-	bind      string // empty -> 127.0.0.1
-	logFormat logging.Format
+	user         string
+	password     string
+	shell        string
+	bind         string // empty -> 127.0.0.1
+	logFormat    logging.Format
+	authMethods  auth.Methods    // nil -> defaults to ["password"] in server
+	acceptedKeys []ssh.PublicKey // if non-nil, configure a KeysetSource
 }
 
 // testServer is everything a §13.3 test needs to drive the in-process
@@ -47,12 +49,14 @@ type testServerOptions struct {
 // shared limiter (so the IPv4-mapped IPv6 test can inspect its
 // Snapshot()), and a cleanup func to stop the server.
 type testServer struct {
-	addr     string
-	user     string
-	password string
-	logBuf   *syncBuffer
-	limiter  *ratelimit.Limiter
-	cleanup  func()
+	addr         string
+	user         string
+	password     string
+	logBuf       *syncBuffer
+	limiter      *ratelimit.Limiter
+	cleanup      func()
+	keysPath     string             // path to the authorized_keys file; empty when pubkey not configured
+	keysetSource *auth.KeysetSource // non-nil when pubkey auth is configured; used for reload tests
 }
 
 // syncBuffer is a goroutine-safe *bytes.Buffer wrapper. The logger writes
@@ -106,6 +110,26 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 
 	hostSigner := generateTestHostKey(t)
 
+	// Optionally configure pubkey auth.
+	var keysetSource *auth.KeysetSource
+	var keysPath string
+	if len(opts.acceptedKeys) > 0 {
+		dir := t.TempDir()
+		keysPath = dir + "/authorized_keys"
+		var content []byte
+		for _, k := range opts.acceptedKeys {
+			content = append(content, ssh.MarshalAuthorizedKey(k)...)
+		}
+		if err := os.WriteFile(keysPath, content, 0600); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		ks := auth.NewKeysetSource(keysPath, logger)
+		if err := ks.Load(); err != nil {
+			t.Fatalf("Load keyset: %v", err)
+		}
+		keysetSource = ks
+	}
+
 	srv := server.New(server.Config{
 		Listener:       listener,
 		HostKey:        hostSigner,
@@ -113,6 +137,8 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		Limiter:        limiter,
 		SessionService: &session.Service{Shell: opts.shell, Log: logger},
 		Log:            logger,
+		Methods:        opts.authMethods,
+		KeysetSource:   keysetSource,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,12 +159,14 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	}
 
 	return &testServer{
-		addr:     listener.Addr().String(),
-		user:     opts.user,
-		password: opts.password,
-		logBuf:   logBuf,
-		limiter:  limiter,
-		cleanup:  cleanup,
+		addr:         listener.Addr().String(),
+		user:         opts.user,
+		password:     opts.password,
+		logBuf:       logBuf,
+		limiter:      limiter,
+		cleanup:      cleanup,
+		keysPath:     keysPath,
+		keysetSource: keysetSource,
 	}
 }
 
@@ -177,6 +205,17 @@ func clientConfig(user, password string) *ssh.ClientConfig {
 	return &ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.Password(password)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         15 * time.Second,
+	}
+}
+
+// clientConfigPubkey builds an ssh.ClientConfig that authenticates with the
+// given signer. Used for publickey auth integration tests.
+func clientConfigPubkey(user string, signer ssh.Signer) *ssh.ClientConfig {
+	return &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         15 * time.Second,
 	}

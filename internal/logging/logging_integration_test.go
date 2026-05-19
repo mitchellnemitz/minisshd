@@ -27,11 +27,11 @@ func TestIntegration_PasswordNeverAppearsInStructuredEvents(t *testing.T) {
 	l := logging.New(&buf, password, logging.FormatLogfmt)
 
 	// Drive each method with the password baked into at least one field.
-	l.Listening(password, 2222, "SHA256:"+password, password, 1234)
+	l.Listening(password, 2222, "SHA256:"+password, password, 1234, "password", 0)
 	l.ConnOpen(password)
 	l.ConnClose(password, 5*time.Second)
-	l.AuthOK(password, password)
-	l.AuthFail(password, password, "bad-user", 3, 4*time.Second)
+	l.AuthOK(password, password, "password", "")
+	l.AuthFail(password, password, "password", "bad-user", 3, 4*time.Second, "")
 	l.Session(password, password)
 	l.Reject(password, password)
 	l.ShutdownSignal(99, password, password)

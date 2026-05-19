@@ -1,0 +1,38 @@
+# minisshd as a systemd --user unit.
+#
+# Install to: ~/.config/systemd/user/minisshd.service
+# Enable:     systemctl --user daemon-reload
+#             systemctl --user enable --now minisshd.service
+#
+# Before installing, edit every value marked REPLACE_ME below.
+
+[Unit]
+Description=minisshd userspace SSH server
+
+[Service]
+Type=simple
+ExecStart=REPLACE_ME_WITH_ABSOLUTE_PATH_TO_BINARY --bind 127.0.0.1 --port 2222
+
+# MINISSHD_PASS and MINISSHD_USER are stored here in plaintext.
+# See docs/examples/README.md for the security tradeoff and alternatives
+# (LoadCredential=, EnvironmentFile= with chmod 600, etc.).
+#
+# WARNING: Do NOT leave REPLACE_ME_WITH_PASSWORD as-is.
+# The binary accepts ANY non-empty string as a password, including
+# the literal text "REPLACE_ME_WITH_PASSWORD".
+Environment=MINISSHD_PASS=REPLACE_ME_WITH_PASSWORD
+Environment=MINISSHD_USER=REPLACE_ME_WITH_USERNAME
+
+Restart=on-failure
+RestartSec=5
+
+# minisshd handles SIGTERM cleanly (drains within 5 s per spec §8).
+# Give it a little more than that before systemd escalates to SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=10s
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

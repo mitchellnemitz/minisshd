@@ -226,8 +226,14 @@ func TestKeyset_check_countCompares(t *testing.T) {
 	}
 }
 
-// TestKeyset_Check_TimingEnvelope is a loose timing assertion that "matches
-// first key" and "matches last key" complete within a 30% wall-clock median.
+// TestKeyset_Check_TimingEnvelope is a loose timing assertion that
+// "matches first key", "matches last key", and "no match" finish within
+// a comparable wall-clock budget. It exists to catch a future refactor
+// that accidentally introduces an early-return on first match — a real
+// timing leak from a 5-key keyset would show as a multiple, not a few
+// dozen percent. The threshold is intentionally loose to absorb the
+// scheduler jitter on shared CI runners; each case is sampled three
+// times and the minimum kept, which filters single-sample outliers.
 // Skipped under -short.
 func TestKeyset_Check_TimingEnvelope(t *testing.T) {
 	if testing.Short() {
@@ -251,22 +257,29 @@ func TestKeyset_Check_TimingEnvelope(t *testing.T) {
 	ks := &Keyset{keys: accepted}
 
 	const iters = 1000
+	const samples = 3
 	measure := func(pub ssh.PublicKey) time.Duration {
 		for i := 0; i < 200; i++ {
 			ks.Check(pub)
 		}
-		start := time.Now()
-		for i := 0; i < iters; i++ {
-			ks.Check(pub)
+		best := time.Duration(0)
+		for s := 0; s < samples; s++ {
+			start := time.Now()
+			for i := 0; i < iters; i++ {
+				ks.Check(pub)
+			}
+			d := time.Since(start)
+			if best == 0 || d < best {
+				best = d
+			}
 		}
-		return time.Since(start)
+		return best
 	}
 
 	matchFirst := measure(pubKeys[0])
 	matchLast := measure(pubKeys[n-1])
 	noMatch := measure(func() ssh.PublicKey { _, p := generateTestKey(t); return p }())
 
-	// All three should be within 30% of each other's median.
 	max := matchFirst
 	if matchLast > max {
 		max = matchLast
@@ -282,10 +295,13 @@ func TestKeyset_Check_TimingEnvelope(t *testing.T) {
 		min = noMatch
 	}
 
+	// Threshold deliberately loose: a real early-return leak would show
+	// as ~5x (first key) vs. ~1x (no match) for a 5-key keyset, not 1.6x.
+	const threshold = 1.60
 	ratio := float64(max) / float64(min)
-	if ratio > 1.30 {
-		t.Errorf("timing envelope too wide: matchFirst=%v matchLast=%v noMatch=%v ratio=%.2f",
-			matchFirst, matchLast, noMatch, ratio)
+	if ratio > threshold {
+		t.Errorf("timing envelope too wide (threshold=%.2f): matchFirst=%v matchLast=%v noMatch=%v ratio=%.2f",
+			threshold, matchFirst, matchLast, noMatch, ratio)
 	}
 }
 

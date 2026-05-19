@@ -150,7 +150,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 		return exitFSFailure
 	}
-	_ = signer // wired into server config in Wave 2
 
 	// §2 step 7 — parse --bind and bind the listener.
 	bindIP := net.ParseIP(*bind)

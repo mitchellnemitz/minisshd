@@ -1,7 +1,6 @@
 package main
 
-// Integration tests for the cmd/minisshd run() function. Owned by
-// test-impl (per the *_integration_test.go suffix). These tests cover
+// Integration tests for the cmd/minisshd run() function. These cover
 // run() paths that the package-local unit tests don't reach.
 
 import (

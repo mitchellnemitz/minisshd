@@ -3,13 +3,22 @@ package server
 import "golang.org/x/crypto/ssh"
 
 // Channel-type constants from RFC 4254 + OpenSSH extensions. Spec §7
-// lists the four channel-open types that must be explicitly rejected.
+// lists the channel-open types that must be explicitly rejected or forwarded.
 const (
 	channelTypeSession            = "session"
 	channelTypeDirectTCPIP        = "direct-tcpip"
 	channelTypeForwardedTCPIP     = "forwarded-tcpip"
 	channelTypeDirectStreamlocal  = "direct-streamlocal@openssh.com"
 	channelTypeStreamlocalForward = "streamlocal-forward@openssh.com"
+)
+
+// channelAction is the tri-state result of classifyChannel.
+type channelAction int
+
+const (
+	actionRejected channelAction = iota
+	actionSession
+	actionForward
 )
 
 // Global request types from RFC 4254 §7.1 that must be rejected: remote
@@ -32,6 +41,19 @@ type newChannel interface {
 	ChannelType() string
 	Reject(reason ssh.RejectionReason, message string) error
 }
+
+// newChannelExt is the subset of ssh.NewChannel that the forward handler
+// needs: ChannelType and Reject (from newChannel), plus ExtraData and
+// Accept. Tests substitute a fake.
+type newChannelExt interface {
+	newChannel
+	ExtraData() []byte
+	Accept() (ssh.Channel, <-chan *ssh.Request, error)
+}
+
+// Compile-time assertion: the real ssh.NewChannel satisfies the extended
+// surface.
+var _ newChannelExt = (ssh.NewChannel)(nil)
 
 // rejectableRequest is the subset of *ssh.Request the dispatcher uses
 // when handling global requests. Spec §7 only requires reply(false);
@@ -57,37 +79,37 @@ func (a sshRequestAdapter) Reqtype() string  { return a.r.Type }
 func (a sshRequestAdapter) WantsReply() bool { return a.r.WantReply }
 func (a sshRequestAdapter) Deny() error      { return a.r.Reply(false, nil) }
 
-// routeChannel decides what to do with an inbound ssh.NewChannel. The
-// "session" type is handed back to the caller as accepted = true so the
-// outer loop can Accept and dispatch to the session service. Everything
-// else is rejected here, with a `reject` log event labeling the rejected
-// feature per spec §9. The function never blocks on I/O other than the
-// Reject call itself.
-//
-// The string returned in `what` matches the spec §9 vocabulary:
-// `tcpip` for both direct- and forwarded-tcpip; `streamlocal` for the
-// two Unix-socket forms; any other unknown channel type is logged as
-// `subsystem` if it begins with "subsystem" (defensive — clients
-// shouldn't open one but if they did), or as the literal channel type
-// otherwise. The four explicit-reject types are the §7 hard list; any
-// other unknown type is also rejected with UnknownChannelType.
-func routeChannel(ch newChannel, remote string, log rejectLogger) (accepted bool) {
+// classifyChannel performs the §7 routing: session → actionSession,
+// direct-tcpip → actionForward, everything else → actionRejected (and
+// rejected here with the appropriate log event). The direct-tcpip arm
+// does NOT call log.Reject — forward open/reject events are owned by
+// forward.go.
+func classifyChannel(ch newChannel, remote string, log rejectLogger) channelAction {
 	switch ch.ChannelType() {
 	case channelTypeSession:
-		return true
-	case channelTypeDirectTCPIP, channelTypeForwardedTCPIP:
+		return actionSession
+	case channelTypeDirectTCPIP:
+		return actionForward
+	case channelTypeForwardedTCPIP:
 		log.Reject(remote, "tcpip")
 		_ = ch.Reject(ssh.Prohibited, "port forwarding not supported")
-		return false
+		return actionRejected
 	case channelTypeDirectStreamlocal, channelTypeStreamlocalForward:
 		log.Reject(remote, "streamlocal")
 		_ = ch.Reject(ssh.Prohibited, "unix-socket forwarding not supported")
-		return false
+		return actionRejected
 	default:
 		log.Reject(remote, ch.ChannelType())
 		_ = ch.Reject(ssh.UnknownChannelType, "unknown channel type")
-		return false
+		return actionRejected
 	}
+}
+
+// routeChannel is a thin wrapper around classifyChannel that returns true
+// iff the action is actionSession. This preserves the existing test surface
+// (TestRouteChannel_*) without modification.
+func routeChannel(ch newChannel, remote string, log rejectLogger) (accepted bool) {
+	return classifyChannel(ch, remote, log) == actionSession
 }
 
 // handleGlobalRequest replies false to every inbound global request and

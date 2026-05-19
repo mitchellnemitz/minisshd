@@ -78,8 +78,10 @@ func TestRouteChannel_SessionAccepted(t *testing.T) {
 	}
 }
 
-func TestRouteChannel_RejectsTCPIP(t *testing.T) {
-	for _, ct := range []string{"direct-tcpip", "forwarded-tcpip"} {
+// TestRouteChannel_RejectsForwardedTCPIP asserts that forwarded-tcpip is
+// rejected. direct-tcpip is no longer rejected (it routes to actionForward).
+func TestRouteChannel_RejectsForwardedTCPIP(t *testing.T) {
+	for _, ct := range []string{"forwarded-tcpip"} {
 		t.Run(ct, func(t *testing.T) {
 			ch := &fakeNewChannel{chanType: ct}
 			log := &recordingRejectLogger{}
@@ -96,6 +98,40 @@ func TestRouteChannel_RejectsTCPIP(t *testing.T) {
 				t.Fatalf("reject log = %+v, want one tcpip entry", log.calls)
 			}
 		})
+	}
+}
+
+// TestClassifyChannel_DirectTCPIPRoutedToForward asserts that classifyChannel
+// returns actionForward for direct-tcpip and does NOT call Reject or log.Reject.
+func TestClassifyChannel_DirectTCPIPRoutedToForward(t *testing.T) {
+	ch := &fakeNewChannel{chanType: "direct-tcpip"}
+	log := &recordingRejectLogger{}
+	action := classifyChannel(ch, "1.2.3.4:5", log)
+	if action != actionForward {
+		t.Fatalf("classifyChannel returned %v, want actionForward", action)
+	}
+	if ch.rejected {
+		t.Fatal("direct-tcpip channel must not be rejected by classifyChannel")
+	}
+	if len(log.calls) != 0 {
+		t.Fatalf("direct-tcpip must not emit a reject log; got %+v", log.calls)
+	}
+}
+
+// TestClassifyChannel_SessionRoutedToSession asserts that classifyChannel
+// returns actionSession for "session" and does not reject the channel.
+func TestClassifyChannel_SessionRoutedToSession(t *testing.T) {
+	ch := &fakeNewChannel{chanType: "session"}
+	log := &recordingRejectLogger{}
+	action := classifyChannel(ch, "1.2.3.4:5", log)
+	if action != actionSession {
+		t.Fatalf("classifyChannel returned %v, want actionSession", action)
+	}
+	if ch.rejected {
+		t.Fatal("session channel must not be rejected")
+	}
+	if len(log.calls) != 0 {
+		t.Fatalf("session must not log reject; got %+v", log.calls)
 	}
 }
 

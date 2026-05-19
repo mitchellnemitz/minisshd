@@ -904,5 +904,73 @@ func TestRun_DefaultBehaviorMatchesBaseline(t *testing.T) {
 	}
 }
 
+// TestRun_ForwardMaxNegativeExits2 asserts that --forward-max with a negative
+// value causes the process to exit with exitBadConfig and a descriptive message.
+func TestRun_ForwardMaxNegativeExits2(t *testing.T) {
+	isolateHome(t)
+	args := append([]string{}, defaultGoodArgs()...)
+	args = append(args, "--forward-max", "-1")
+	_, stderr, rc := runToCompletion(t, args)
+	if rc != exitBadConfig {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitBadConfig, stderr)
+	}
+	if !strings.Contains(stderr, "forward-max") && !strings.Contains(stderr, "forward_max") {
+		t.Errorf("stderr should mention forward-max; got %q", stderr)
+	}
+}
+
+// TestRun_ForwardMaxNonInteger_Env asserts that a non-integer MINISSHD_FORWARD_MAX
+// causes the process to exit with exitBadConfig.
+func TestRun_ForwardMaxNonInteger_Env(t *testing.T) {
+	isolateHome(t)
+	unsetenv(t, "MINISSHD_FORWARD_MAX")
+	t.Setenv("MINISSHD_FORWARD_MAX", "abc")
+	_, stderr, rc := runToCompletion(t, defaultGoodArgs())
+	if rc != exitBadConfig {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitBadConfig, stderr)
+	}
+	if !strings.Contains(stderr, "MINISSHD_FORWARD_MAX") {
+		t.Errorf("stderr should mention MINISSHD_FORWARD_MAX; got %q", stderr)
+	}
+}
+
+// TestRun_ForwardMaxDefault32 asserts that when neither --forward-max nor
+// MINISSHD_FORWARD_MAX is set, the server starts successfully (default = 32).
+func TestRun_ForwardMaxDefault32(t *testing.T) {
+	isolateHome(t)
+	unsetenv(t, "MINISSHD_FORWARD_MAX")
+	_, stderr, rc := runUntilListening(t, defaultGoodArgs())
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitOK, stderr)
+	}
+}
+
+// TestRun_ForwardMaxFlagBeatsEnv asserts that --forward-max overrides
+// MINISSHD_FORWARD_MAX: even with an invalid env value, the flag wins.
+func TestRun_ForwardMaxFlagBeatsEnv(t *testing.T) {
+	isolateHome(t)
+	unsetenv(t, "MINISSHD_FORWARD_MAX")
+	t.Setenv("MINISSHD_FORWARD_MAX", "not-a-number")
+	args := append([]string{}, defaultGoodArgs()...)
+	args = append(args, "--forward-max", "10")
+	_, stderr, rc := runUntilListening(t, args)
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d (flag should beat env); stderr=%q", rc, exitOK, stderr)
+	}
+}
+
+// TestRun_ForwardMaxZeroAllowed asserts that --forward-max 0 (forwarding
+// disabled) is accepted and the server starts normally.
+func TestRun_ForwardMaxZeroAllowed(t *testing.T) {
+	isolateHome(t)
+	unsetenv(t, "MINISSHD_FORWARD_MAX")
+	args := append([]string{}, defaultGoodArgs()...)
+	args = append(args, "--forward-max", "0")
+	_, stderr, rc := runUntilListening(t, args)
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitOK, stderr)
+	}
+}
+
 // guard against accidental package init
 var _ = errors.Is

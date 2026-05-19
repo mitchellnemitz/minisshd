@@ -31,11 +31,13 @@ minisshd [flags]
 |---|---|---|
 | `--port N` | `2222` | TCP port to listen on. |
 | `--bind IP` | `0.0.0.0` | IP address to bind the listener to. Use `127.0.0.1` for loopback only, a specific LAN address to restrict to one interface, `::` for all IPv6 interfaces, etc. Both IPv4 and IPv6 literals are accepted. |
-| `--pass XXXXXX` | random 6-digit | Password clients must present. Any non-empty string accepted as an SSH password is valid. Overrides `MINISSHD_PASS` if both are set. If neither is set, a random 6-digit numeric password is generated and printed at startup. |
+| `--pass XXXXXX` | random 6-digit | Password clients must present. Any non-empty string accepted as an SSH password is valid. Overrides `MINISSHD_PASS` if both are set. If neither is set, a random 6-digit numeric password is generated and printed at startup. Only consulted when `--auth` includes `password`. |
 | `--user NAME` | current OS user | Username clients must present. Overrides `MINISSHD_USER` if both are set. |
 | `--shell PATH` | `$SHELL` | Shell binary for interactive sessions. Falls back to `/bin/zsh` if `$SHELL` is unset. |
 | `--log-format FORMAT` | `logfmt` | Structured-log encoding. Valid values: `logfmt`, `json`. See §9. |
 | `--host-key PATH` | `~/.minisshd/host_key` | Path to the persistent host key. Generated on first run if missing. |
+| `--auth METHODS` | `password` | Comma-separated SSH auth methods to advertise. Valid values: `password`, `publickey`, `password,publickey`, `publickey,password`. Whitespace around items is trimmed. Duplicate items are an error. Empty string or an unknown method is an error. |
+| `--authorized-keys PATH` | `$XDG_CONFIG_HOME/minisshd/authorized_keys` (else `~/.config/minisshd/authorized_keys`) | Path to the OpenSSH-format authorized-keys file. Read only when `--auth` includes `publickey`. A missing file is treated as zero accepted keys (with a single `WARN` log at startup); a present-but-unreadable file is a startup error. |
 
 ### Environment variables
 
@@ -44,6 +46,8 @@ minisshd [flags]
 | `MINISSHD_PASS` | Password value. Used only if `--pass` is not provided. Preferred over `--pass` because command-line arguments are visible to any local user via `ps`; environment variables are less exposed (not visible in default `ps` output on macOS or Linux). |
 | `MINISSHD_USER` | Expected username. Used only if `--user` is not provided. |
 | `MINISSHD_LOG_FORMAT` | Log encoding. Used only if `--log-format` is not provided. Same valid values as the flag. |
+| `MINISSHD_AUTH` | Comma-separated auth methods. Used only if `--auth` is not provided. Same value grammar as `--auth`. |
+| `MINISSHD_AUTHORIZED_KEYS` | Authorized-keys file path. Used only if `--authorized-keys` is not provided. |
 
 ### Startup validation
 
@@ -51,14 +55,20 @@ On startup the server must:
 
 1. Validate `--port`: must be an integer in `[0, 65535]`. The value `0` is permitted and means "ask the kernel for an ephemeral port" — used by tests. Otherwise fail with exit code 2.
 2. Resolve the user-supplied password: `--pass` if set, else `$MINISSHD_PASS`, else mark for generation in step 8. If a user-supplied value is the empty string, fail with exit code 2.
+2b. Resolve `--auth`: `--auth` if set, else `$MINISSHD_AUTH`, else `"password"`. Parse the comma-separated value into a set of methods. Reject (exit code 2) on: empty string, unknown method, duplicate method. The order in the value is preserved and surfaces in the SSH `methods` list returned to clients.
+2c. If the resolved method set includes `publickey`:
+    - Resolve the authorized-keys path: `--authorized-keys` if set, else `$MINISSHD_AUTHORIZED_KEYS`, else `$XDG_CONFIG_HOME/minisshd/authorized_keys` (when `$XDG_CONFIG_HOME` is set and non-empty), else `$HOME/.config/minisshd/authorized_keys`.
+    - If the file is present, attempt to parse it. A parse-level error from `os.Open` (other than `os.ErrNotExist`) exits with code 4 and a message naming the path. Malformed key lines do **not** fail startup (they log `pubkey-parse-error` at WARN and are skipped, per §4).
+    - If the file is absent, the keyset is empty and the server logs a single `WARN` `pubkey-keys-missing path=<path>` event at startup. Startup continues — this is the "publickey configured but no keys yet" state, which is valid (other methods can still authenticate, or the operator can drop keys in and `SIGHUP` reload).
+    - If the resolved method set is exactly `{publickey}` AND no keys were loaded, exit with code 2: this is an unauthenticable configuration. The `--pass` / `MINISSHD_PASS` value is irrelevant here — when `--auth=publickey`, password auth is not offered regardless of whether a password was supplied, so a configured password cannot rescue the server from having zero accepted keys.
 3. Resolve the expected username: `--user` if set, else `$MINISSHD_USER`, else the OS username of the process owner (`$USER`, falling back to `getpwuid(getuid())`). Must be non-empty; otherwise fail with exit code 2.
 3a. Resolve `--log-format`: `--log-format` if set, else `$MINISSHD_LOG_FORMAT`, else `logfmt`. Reject any value other than `logfmt` or `json` with exit code 2 and a message naming the rejected value.
 4. Validate `--shell`: resolve the path with `stat` (following symlinks) and verify the final target exists, is a regular file, and is executable by the current user. A broken symlink, a directory, or a non-executable target all exit with code 2 and a message naming the resolved path that failed.
 5. Ensure `~/.minisshd/` exists with mode `0700`. If it exists with a wider mode, refuse to start with exit code 4 and instruct `chmod 700`.
 6. Load or generate the host key (see §6).
 7. Parse `--bind` as a textual IP literal (`net.ParseIP` in Go); fail with exit code 2 if invalid. Bind to `<bind>:<port>` — formatted as `bind:port` for IPv4 and `[bind]:port` for IPv6. On `EADDRINUSE` fail with exit code 3 and a clear message. On `EADDRNOTAVAIL` (the address isn't assigned to any local interface) fail with exit code 3 and a clear message naming the address.
-8. **Only after the listener is successfully bound**, if no password was resolved in step 2, generate a fresh 6-digit numeric password using a cryptographically secure RNG (`crypto/rand` in Go) and print exactly one line to stdout: `Password: 482910`. This is the only path that writes the password to stdout. If a password was supplied via flag or env, no banner is printed.
-9. Log a single structured `listening` event including the bind address, the **actually bound port** (which may differ from `--port` when `--port 0` was requested — read it from the listener's local address after bind), host key fingerprint, expected username, and PID.
+8. **Only after the listener is successfully bound**, if no password was resolved in step 2, generate a fresh 6-digit numeric password using a cryptographically secure RNG (`crypto/rand` in Go) and print exactly one line to stdout: `Password: 482910`. This is the only path that writes the password to stdout. If a password was supplied via flag or env, no banner is printed. **A random password is only generated when the resolved `--auth` set includes `password` and no password was supplied; in `publickey`-only mode no password is generated and no banner is printed.**
+9. Log a single structured `listening` event including the bind address, the **actually bound port** (which may differ from `--port` when `--port 0` was requested — read it from the listener's local address after bind), host key fingerprint, expected username, PID, the configured auth method list, and the count of accepted public keys. The new fields are named `auth_methods` (e.g. `auth_methods=password,publickey`) and `pubkey_count` (an integer; 0 when publickey is not configured).
 
 The ordering matters for security: the password banner is printed only when the server is guaranteed to actually start. Any earlier failure exits before the banner runs.
 
@@ -74,18 +84,75 @@ The server must not be exposed to the public internet by design — this is call
 
 ## 4. Authentication
 
-### Method
+### Methods
 
-Only the SSH **`password`** authentication method is offered. `publickey`, `keyboard-interactive`, and all others are not advertised. The `none` method is part of the SSH negotiation flow — the server responds to a `none` attempt by listing `password` as the only allowed method, then rejects it.
+The server advertises the SSH authentication methods listed by `--auth` (§2).
+Valid values are `password`, `publickey`, or any comma-separated combination
+(`password,publickey`, `publickey,password`). Order is significant only for the
+order in which the server lists methods in the `SSH_MSG_USERAUTH_FAILURE`
+methods list; semantics are **any-of** — the client must satisfy *at least one*
+listed method, matching OpenSSH's behavior when both `PasswordAuthentication`
+and `PubkeyAuthentication` are `yes`. The default is `password`, preserving
+pre-pubkey behavior.
 
-The server must guarantee **3 real password attempts per connection** before disconnecting. Because `golang.org/x/crypto/ssh`'s `MaxAuthTries` counter increments on the mandatory `none` probe as well as on password failures, setting `MaxAuthTries = 3` would deliver only 2 password attempts. The spec therefore requires `MaxAuthTries = 4` (allowing one `none` + three passwords), with an integration test (§13.3) that proves a client offering 10 password attempts is disconnected on the third *password* failure, not earlier and not later. Implementers in other languages must implement the same guarantee: count password failures only.
+`keyboard-interactive` and all other methods are not advertised. The `none`
+method is part of the SSH negotiation flow — the server responds to a `none`
+attempt by listing the configured methods, then rejects it.
+
+The configured username (§2 step 3) gates **every** method. For publickey
+auth, the username supplied by the client in the `SSH_MSG_USERAUTH_REQUEST`
+must match the configured username under the same constant-time check used
+for password auth (see Credential check below).
+
+The server allows up to **`MaxAuthTries = 6` combined auth failures per
+connection** before disconnecting. A "failure" is any auth attempt the
+server rejects — either a password attempt, a publickey signature failure,
+or a rejected-key pubkey **query** (the probe where the client asks "would
+you accept this key?" against an unknown key). Password failures, publickey
+signature failures, and rejected-key queries all share a single combined
+`authFailures` counter in `golang.org/x/crypto/ssh`. The spec sets
+`MaxAuthTries = 6` (**breaking from the previous catch-up value of 3**;
+rationale below). The current `golang.org/x/crypto/ssh` library (v0.51.0,
+`ssh/server.go` lines 843–845) exempts only the mandatory initial `none`
+probe from this counter ("Allow initial attempt of 'none' without penalty");
+every other failure — including rejected-key queries — increments
+`authFailures`.
+
+**Why `MaxAuthTries = 6`:** A typical SSH client (OpenSSH, PuTTY) probes
+each key in its agent with a query before presenting a signature. If the
+client holds 3 keys of which 2 are not in the server's authorized-keys file,
+the client generates 2 rejected-key queries (`authFailures` +2) before
+signing with the accepted key. With `MaxAuthTries = 3`, those two probes
+consume two of the three slots, leaving only one real credential attempt.
+Setting `MaxAuthTries = 6` accommodates up to 3 rejected-key probes plus 3
+real credential attempts before disconnect — matching what a normal
+multi-key agent session needs without sacrificing brute-force protection
+(the rate-limiter's per-IP backoff is the primary brute-force defense).
+The effective guarantee is therefore: "at most 6 `authFailures` before
+disconnect, where both rejected queries and real failures count; the
+rate-limiter enforces the real per-IP cap." The `TestIntegration_MaxAuthTriesCombinedCounter`
+integration test (§13.3) must pass before this spec value is considered
+committed, as it asserts the library's counter behavior matches this
+description. Implementations in other languages must implement the same
+semantics: exempt only `none`, count all other rejections.
+
+**Note:** A previous revision of this spec stated `MaxAuthTries = 3` and
+claimed that pubkey queries do not count toward `authFailures`. That claim
+was incorrect. The library source shows that the `isQuery=true` path sets
+`authErr = candidate.result` for rejected keys and then falls through to the
+shared `authFailures++` block at lines 843–845 of `server.go`. Only accepted
+queries (`candidate.result == nil`) use `continue userAuthLoop` before
+reaching that block.
 
 ### Credential check
 
-To prevent timing attacks that distinguish wrong-user from wrong-password (or reveal the configured password length), the check must:
+#### Password
+
+To prevent timing attacks that distinguish wrong-user from wrong-password (or
+reveal the configured password length), the password check must:
 
 1. Compute SHA-256 over the presented username and over the presented password. The implementation pre-computes and caches SHA-256 of the resolved configured username and password after the password is finalized (per §2 step 2 if supplied via `--pass` or `MINISSHD_PASS`, or §2 step 8 if auto-generated) and before the listener accepts its first connection, so every auth callback compares against cached digests. SHA-256 over arbitrary-length input always produces 32 bytes, so equal-length comparison is guaranteed.
-2. Compare each presented hash to the configured hash with `subtle.ConstantTimeCompare`. **Both comparisons must always run** — do not short-circuit on the first mismatch. Use `subtle.ConstantTimeSelect` or two boolean ANDs to combine the results without branching.
+2. Compare each presented hash to the configured hash with `subtle.ConstantTimeCompare`. **Both comparisons must always run** — do not short-circuit on the first mismatch. Store each `subtle.ConstantTimeCompare` return value (an `int`) in a separate variable, then combine with bitwise `&` (e.g. `okInt := userMatch & passMatch`). Using `&&` on the raw calls would allow the Go compiler or runtime to short-circuit on the first zero return; storing into variables first eliminates that possibility.
 3. Decide the result:
    - both match → `(ok=true, reason="")`
    - user-hash mismatch, password-hash match → `(ok=false, reason="bad-user")`
@@ -94,11 +161,38 @@ To prevent timing attacks that distinguish wrong-user from wrong-password (or re
 
 The client sees a generic "Permission denied (password)" in all failure cases; only the logs distinguish the reasons (see §9).
 
-**Residual side-channel:** SHA-256 itself is not constant-time over input length — a password that fills two blocks (≥ 56 bytes) takes measurably more CPU than one that fits in one block. The leak is at the block-count level (a handful of cycles per block), far smaller than a byte-by-byte string compare, and dwarfed by network jitter and the rate-limit backoff in §5. For the threat model this spec targets (single-user LAN server, 60 s backoff cap, 6-digit auto-generated default), the residual leak is acceptable. Spec implementers must not claim "fully constant-time auth"; the claim is "constant-time given equal-length inputs, with sub-cycle differences between length classes."
+#### Publickey
+
+The publickey check uses the same hash-then-`subtle.ConstantTimeCompare`
+discipline so the timing envelope reveals only the **size** of the accepted
+keyset, not which key matched (or whether any matched):
+
+1. At startup (after §2 step 6, before accept), the authorized-keys file (§2 step 2c, see also §6.1) is parsed with `golang.org/x/crypto/ssh.ParseAuthorizedKey`. For each accepted key, the server computes the SHA-256 digest of `key.Marshal()` (the wire-format bytes) and caches the resulting 32-byte digest. Marshal-format is the same shape OpenSSH uses for fingerprinting; any two keys that compare equal under the SSH protocol have identical Marshal output. The cached digests are sorted lexicographically so reload-induced reordering does not change the iteration pattern.
+2. On every publickey callback, compute SHA-256 over the presented key's `Marshal()` bytes, then `subtle.ConstantTimeCompare` it against **every** cached digest. The iteration must not short-circuit on the first match — it walks the entire keyset on every call and ORs the results with `|` on the int returns. This leaks the cardinality of the keyset (each pubkey check takes ~N × 32-byte compare time) but not which key matched.
+3. The presented username is hashed and compared to the configured-username digest with `subtle.ConstantTimeCompare` in the **same** way as the password path. The username comparison and the key comparison both always run; the combined `ok` is the bitwise AND of the two int results.
+4. Decide the result:
+   - username matches AND any key digest matches → `(ok=true, reason="")`
+   - username matches, no key matches → `(ok=false, reason="bad-key")`
+   - username mismatches, any key matches → `(ok=false, reason="bad-user")`
+   - username mismatches, no key matches → `(ok=false, reason="bad-user")` (user wins for logging — mirrors the password rule)
+
+A keyset of zero accepted keys is a special case: the SHA-256 loop runs zero times but the *check* is still invoked (cannot short-circuit at the function boundary; doing so would leak "no keys configured" via timing). The function performs a single dummy `subtle.ConstantTimeCompare` against a 32-byte zero buffer so the cost floor matches "one configured key", then returns `(ok=false, reason="bad-key")`. The client sees a generic "Permission denied (publickey)" either way.
+
+**Residual side-channel:** SHA-256 itself is not constant-time over input length — a key that fills two blocks (most modern keys; an ed25519 marshalled public key is ~51 bytes, so it fits in one block, while RSA-4096 takes ~530 bytes and spans nine blocks) takes measurably more CPU than a one-block key. Comparison is over the 32-byte digest, which is length-invariant; only the hashing step varies. The leak is at the block-count level (a handful of cycles per block), dwarfed by network jitter and the rate-limit backoff in §5. The existing residual-leak caveat from the password path applies equally: spec implementers must not claim "fully constant-time auth"; the claim is "constant-time given equal-length inputs (i.e. same key algorithm and size), with sub-cycle differences between length classes."
 
 ### Failure semantics
 
-The 3-attempt-per-connection cap is described in §4 (Method). Cross-connection failures feed the rate limiter — see §5.
+The `MaxAuthTries = 6` per-connection cap covers password failures, publickey signature failures, AND rejected-key pubkey queries, all combined into a single `authFailures` counter (library behavior, `ssh/server.go`). The initial `none` probe is the only exempt event. Cross-connection failures feed the rate limiter — see §5 — under the same per-IP key, with no distinction between method-of-failure. The rate limiter fires inside `PublicKeyCallback` on every invocation (including queries), which is a deliberate departure from OpenSSH's behavior.
+
+#### Authorized-keys file: format, options, and reload
+
+The format is OpenSSH's standard `authorized_keys` syntax: one key per line, with `#`-prefixed lines and blank lines ignored. Trailing comments after the key are permitted. Key options (e.g. `command="..."`, `from="..."`, `no-port-forwarding`, `no-pty`) are **parsed but ignored** at this stage — the implementation logs a single `WARN` `pubkey-option-ignored` event per line containing options at load time and accepts the key. This is the right default for a single-user LAN tool: the spec already restricts the server to one identity, so per-key restriction options have no surface to bite on. Future spec revisions may honor a subset; this one explicitly does not.
+
+Malformed lines (a parse error from `ssh.ParseAuthorizedKey`) cause a single `WARN` `pubkey-parse-error` event naming the line number and ssh.ParseAuthorizedKey's error message, and the line is skipped. A file that yields zero usable keys is permitted at load time but means publickey auth will always fail — this is not itself an error, but the startup `listening` event records `pubkey_count=0` so an operator notices.
+
+The server reloads the authorized-keys file on `SIGHUP`. Reload is atomic with respect to in-flight publickey callbacks: the current keyset is held in an `atomic.Pointer[Keyset]`, so any callback that started with the old `*Keyset` continues to use it and any callback that starts after the swap sees the new one. A reload that fails (file unreadable, all lines malformed, etc.) logs a `WARN` `pubkey-reload-failed` event and leaves the previous keyset in place — an operator's typo on rotation never knocks all clients offline. Likewise, a reload that succeeds in parsing the file but yields **zero usable keys** is treated as a failure when the previous keyset had ≥1 key: the previous keyset is preserved, and `pubkey-reload-failed` is logged. This policy prevents an accidental empty-file rotation from permanently locking all publickey clients out (they would have no recourse until the operator corrects the file and sends another SIGHUP).
+
+`SIGHUP` is otherwise a no-op (existing behavior; minisshd does not interpret SIGHUP for anything else). On macOS and Linux the signal is captured via `signal.Notify`. If the spec ever extends SIGHUP to other behaviors (log rotation, etc.), the keyset reload remains.
 
 ---
 
@@ -352,15 +446,20 @@ appears verbatim in both formats' invocations.
 
 | Event | Level | Fields |
 |---|---|---|
-| `listening` | INFO | bind, port, fingerprint, user, pid |
+| `listening` | INFO | bind, port, fingerprint, user, pid, auth_methods, pubkey_count |
 | `conn-open` | INFO | remote |
 | `conn-close` | INFO | remote, duration (Go `time.Duration.String()` form, e.g. `27s`, `1m3.5s`) |
-| `auth-ok` | INFO | remote, user |
-| `auth-fail` | WARN | remote, user, reason (`bad-user` / `bad-password`), attempt (per-IP cumulative `fail_count` after this failure), next_delay (sleep that the next attempt from this IP will incur) |
+| `auth-ok` | INFO | remote, user, method (`password` / `publickey`), fingerprint (publickey only; SHA-256 of the presented key in `SHA256:<base64>` form, identical to `ssh-keygen -lf`). For `method=password` the fingerprint field is omitted. |
+| `auth-fail` | WARN | remote, user, method (`password` / `publickey`), reason (`bad-user` / `bad-password` / `bad-key`), attempt (per-IP cumulative `fail_count` after this failure), next_delay (sleep that the next attempt from this IP will incur), fingerprint (publickey only; SHA-256 of the *presented* key, identical to `ssh-keygen -lf`; omitted for `method=password`). |
 | `session` | INFO | remote, kind (`shell` / `exec` / `sftp`) |
 | `reject` | WARN | remote, what (`x11`, `tcpip`, `agent`, `subsystem`, `streamlocal`, etc.) |
 | `shutdown-signal` | INFO | pgid (process group ID receiving the signal), sig (POSIX signal name, e.g. `HUP` or `KILL`), reason (`shutdown` for server SIGINT/SIGTERM path, `channel-close` for client disconnect). Emitted every time the server sends a signal to a child process group. Lets tests verify signal delivery timing without racing the kernel. |
 | `drain-timeout` | WARN | remote, kind (`shell` / `exec`), bytes_dropped. Emitted when post-exit output drain exceeds the 2 s cap (§8.1 step 5 / §8.2 step 4). Indicates the PTY or pipes didn't close cleanly after child exit. |
+| `pubkey-option-ignored` | WARN | path (file), line (1-based line number), option (e.g. `command="..."`). Emitted once per options-bearing line at startup and at every reload. |
+| `pubkey-parse-error` | WARN | path, line, error |
+| `pubkey-keys-missing` | WARN | path. Emitted once at startup if publickey is configured and the file is absent. |
+| `pubkey-reload-failed` | WARN | path, error. Emitted on SIGHUP when the new file cannot be opened or yielded zero usable keys after previously having ≥1. |
+| `pubkey-reload-ok` | INFO | path, pubkey_count. Emitted on every successful SIGHUP reload. |
 | `error` | ERROR | message, remote (if applicable) |
 
 The password must **never** appear in any structured log event, including at startup or in errors. The single exception is the `Password: XXXXXX` banner line printed to stdout when the password is auto-generated (see §2 step 8); this is a one-shot user-facing notice, not a structured log entry.
@@ -404,13 +503,20 @@ Exit code taxonomy: **0** clean shutdown, **1** unexpected internal error, **2**
 | Client offers a non-password auth method | Server advertises only `password`; clients negotiate down. |
 | PTY allocation fails | Reject the `pty-req`, keep the channel; client can still use `exec`. |
 | Child shell fails to spawn | Send `exit-status` 127, log an `error`, close the channel. |
+| `--auth` empty, unknown method, or duplicate method | Exit 2, message to stderr naming the rejected value. |
+| `--auth=publickey` only AND no keys loaded | Exit 2, message to stderr instructing the operator to provide keys or add `password` to `--auth`. (Whether `--pass` was supplied is irrelevant — password auth is not offered in publickey-only mode.) |
+| `--authorized-keys` path exists but is not readable | Exit 4, message naming the path. |
+| `--authorized-keys` path absent when `--auth` includes `publickey` | Startup continues with empty keyset; WARN `pubkey-keys-missing` logged. |
+| Client offers `publickey` when `--auth=password` only | Server advertises only `password`; client negotiates down. Behaves identically to today's spec. |
+| Client offers `password` when `--auth=publickey` only | Server advertises only `publickey`; client either falls back if it has a key, or fails. |
+| SIGHUP received | Reload authorized-keys file. On parse-or-open failure, keep previous keyset and log `pubkey-reload-failed`. On success log `pubkey-reload-ok`. |
 
 ---
 
 ## 12. Explicit non-goals
 
 - Public-internet exposure.
-- Multiple users, key-based auth, certificates, or 2FA.
+- Multiple users, SSH certificates, or 2FA. (Public-key auth alongside password is supported per §4; certificate-based auth, certificate authorities, and OpenSSH `cert-authority` directives remain out of scope. Multi-user mappings — different keys to different system users — are also out of scope; minisshd always runs as the invoking user, and the configured username gates all auth methods.)
 - Port forwarding (local, remote, dynamic), agent forwarding, X11.
 - chroot / sandboxed SFTP.
 - Audit logging of session content (keystrokes, transferred files).
@@ -458,6 +564,14 @@ Each component is tested in isolation. At minimum:
 - Credential check uses SHA-256 + `subtle.ConstantTimeCompare`; both hash comparisons always run (no short-circuit). Verified by code inspection in review. A timing test (10 000 wrong-user and 10 000 wrong-password attempts) compares the two timing samples with a two-sided Mann-Whitney U test; the test asserts U-statistic p-value > 0.001 (i.e. no statistically detectable difference at α = 0.001). A simple mean-ratio check is **not** used because microsecond-scale operations on shared CI hardware have noise that defeats any tight threshold.
 - Auth callback returns `(ok, reason)` for all four combinations of {good, bad} × {user, password}, with `reason ∈ {"", "bad-user", "bad-password"}`. When both inputs are bad, `reason == "bad-user"`.
 
+**`auth` (publickey)**
+- Parsing accepts a single ed25519 key, ignores `#` comments, ignores blank lines, accepts a key with options (`command="..."`) and emits a `pubkey-option-ignored` warning, rejects a malformed line and emits a `pubkey-parse-error`, and returns an empty keyset for a missing or empty file.
+- Marshal-then-SHA-256 of a freshly generated ed25519 key matches `ssh.FingerprintSHA256` from `golang.org/x/crypto/ssh`.
+- `Keyset.Check` returns `(ok=false, reason="bad-key")` for an empty keyset (covering the dummy-compare branch — see §4 publickey step 4) and runs in the same envelope (within 5×) as a 1-key keyset.
+- `Keyset.Check` returns `(ok=true)` when the presented key matches one of the loaded keys, with the constant-time invariant: the entire keyset is always iterated regardless of match position.
+- `Keyset.Check` always iterates the entire keyset: a counter on the inner compare proves N compares per call regardless of match position.
+- Reload swap: build a keyset, swap atomically to a new keyset, confirm the new keys validate and the old ones don't.
+
 **`cmd/minisshd` startup validation**
 - `--port -1`, `--port 65536`, `--port abc` all exit 2 with a message naming the rejected value. `--port 0` succeeds and the `listening` event reports the actually-bound port.
 - `--shell /nonexistent`, `--shell /etc/passwd` (not executable), `--shell /etc` (directory) all exit 2.
@@ -466,6 +580,11 @@ Each component is tested in isolation. At minimum:
 - Banner: with `--pass hunter2`, captured stdout does **not** contain a `Password:` line. Same with `MINISSHD_PASS=hunter2` in the environment (no `--pass`). With no `--pass` and no `MINISSHD_PASS`, captured stdout contains exactly one `^Password: \d{6}$` line, *after* the listener has bound.
 - Banner-suppression on failure: with no `--pass` set and an intentionally bad `--bind 999.999.999.999`, the process exits non-zero and captured stdout is empty (the password is never generated, let alone printed).
 - `--log-format xml` exits 2 with a message naming the rejected value. `--log-format ""` (explicit empty) also exits 2. `--log-format json` and `--log-format logfmt` succeed. `MINISSHD_LOG_FORMAT=json` with no `--log-format` flag selects JSON.
+- `--auth ""`, `--auth bogus`, `--auth password,bogus`, `--auth password,password` all exit 2.
+- `--auth publickey` with no `--authorized-keys` file present produces a WARN `pubkey-keys-missing` and startup proceeds.
+- `--auth publickey` with no keys file present and no other method exits 2 (unauthenticable configuration).
+- `MINISSHD_AUTH=publickey,password` with no flag set works identically to `--auth=publickey,password`.
+- `MINISSHD_AUTHORIZED_KEYS` precedence: env consulted only when flag not set; otherwise flag wins.
 
 **`ratelimit`** (clock is injected for determinism)
 - `delay(0) == 0`, `delay(1) == 1s`, `delay(2) == 2s`, `delay(7) == 60s`, `delay(20) == 60s` (capped).
@@ -507,7 +626,7 @@ Required scenarios:
 - Correct user + password → shell channel returns expected output for a scripted command.
 - Wrong user + correct password → auth fails; captured log contains `reason=bad-user`.
 - Correct user + wrong password → auth fails; captured log contains `reason=bad-password`.
-- Three wrong passwords in one connection → server closes the connection after the third password failure. Specifically, with a custom client config offering 10 password attempts, the server still terminates the connection after the third password failure (proving the 3-password-cap is enforced server-side, not by the client, despite `MaxAuthTries = 4` allowing room for the `none` probe per §4).
+- Six wrong passwords in one connection → server closes the connection after accumulating 6 `authFailures`. With a custom client config offering 10 password attempts, the server terminates the connection after the sixth failure, proving `MaxAuthTries = 6` is enforced server-side per §4.
 - Exec channel: `'echo hi; exit 7'` returns `"hi\n"` on stdout and exit-status 7.
 - SFTP subsystem: `Stat`, write a 1 MB file, read it back, delete it; bytes match.
 - Rate-limit state is shared across reconnects from one IP: fire 5 failed attempts (separate connections), then a 6th with the correct credentials. After the 5th failure `fail_count` is 5, so the delay before the 6th attempt's password callback is `2^(5-1) = 16 s`. Measure wall-clock time from the start of the 6th TCP connection to the `auth-ok` log entry. It must be within `[13 s, 21 s]` (16 s ±20% gives [12.8, 19.2]; add up to ~1 s for the handshake and ~1 s for general jitter on shared CI). The rate-limiter is given a real clock here, not an injected one.
@@ -521,6 +640,14 @@ Required scenarios:
 - **IPv4-mapped IPv6 normalization (§5):** start the server with `--bind ::` (dual-stack). Make a single IPv4 connection from `127.0.0.1` and fail auth once. On a dual-stack listener that IPv4 connection arrives at the SSH layer with remote address `::ffff:127.0.0.1`. The rate-limiter must expose a way to inspect its current state (e.g. a `Snapshot()` method returning a `map[string]int` of `key → fail_count`; the same surface is useful for an eventual admin endpoint and so is not test-only). Assert: (a) the snapshot contains the key `127.0.0.1` (the normalized form) and not `::ffff:127.0.0.1` — proving normalization happened; (b) `fail_count == 1` under that key. Then make a second IPv4 connection from `127.0.0.1` and fail again; assert the count under `127.0.0.1` is now 2. For comparison, make a connection from `::1` (pure IPv6 loopback) and fail; assert it occupies a *separate* key `::1` with `fail_count == 1`.
 - **`exec` with prior `pty-req`** (`ssh -t host CMD` shape): write a `.zshrc` sentinel. Open a session channel, send `pty-req`, then `exec 'echo DONE'`. Captured output must contain the `.zshrc` marker (PTY → interactive) and `DONE`. Verify the spawned process saw `TERM` in its environment (echo it via the exec command and assert).
 - **End-to-end log capture in JSON mode.** Start the test server with `logFormat: logging.FormatJSON`, drive one good auth and one bad auth, capture stdout, split on `\n`, `json.Unmarshal` each line, assert the expected sequence of events (`conn-open`, `auth-ok`, `conn-close`, `auth-fail`) each appear at least once with the expected field structure.
+- **Publickey-only succeeds**: server with `authMethods: ["publickey"]` and a single accepted key; client presenting that key → `auth-ok method=publickey` in log; client presenting a different key → `auth-fail reason=bad-key`.
+- **Wrong user with correct key**: `auth-fail reason=bad-user method=publickey` in log.
+- **Password baseline preserved after pubkey additions**: server with `authMethods: ["password"]` only; password client still authenticates with `method=password`.
+- **Both methods — password path**: server with `authMethods: ["password", "publickey"]`; a client using the correct password is authenticated with `method=password`.
+- **Both methods — pubkey path**: server with `authMethods: ["password", "publickey"]`; a client using the correct key is authenticated with `method=publickey`.
+- **Fingerprint format**: the `fingerprint` field in `auth-ok` for a publickey auth equals `ssh.FingerprintSHA256(pub)` for the presented key.
+- **MaxAuthTries combined counter**: server with both methods; a client probing 3 wrong keys (rejected-key queries) then 3 wrong passwords accumulates exactly 6 `auth-fail` events, after which the connection is closed.
+- **Pubkey failure feeds rate limiter**: 5 failed connections (wrong key) from the same IP cause exponential backoff observable on the 6th connection (skipped under `-short`).
 
 ### 13.4 End-to-end tests
 
@@ -555,6 +682,7 @@ All tests start the server with `--user testuser` unless a test explicitly varie
 14. **Host-key permission refusal** — first start the binary normally (with default `--host-key` pointing into the test's tmp HOME) so it generates the key with mode `0600`. Stop the binary cleanly. Then `chmod 0644 $HOME/.minisshd/host_key` and start the binary again — it must exit 4 with a stderr message instructing `chmod 600`.
 15. **Bind to loopback** — start with `--bind 127.0.0.1`. (a) `ssh -p PORT testuser@127.0.0.1` succeeds. (b) Pick a non-loopback IPv4 address by enumerating interfaces (`net.InterfaceAddrs` in Go); skip the test if none is available (CI sometimes has only loopback). (c) `ssh -p PORT testuser@<non-loopback-ip>` must fail with a connection error (TCP refused or timeout — not a Permission denied), proving the bind restriction holds at the kernel level.
 16. **Invalid bind address** — start with `--bind not-an-ip`, assert exit 2 with a clear stderr message naming the rejected value.
+17. **Pubkey auth** — generate an Ed25519 keypair; write the public key to a temp `authorized_keys` file; start the server with `--auth publickey --authorized-keys <path>`; connect with `ssh -i <privkey> -o BatchMode=yes -o IdentitiesOnly=yes -o PreferredAuthentications=publickey` and assert the connection succeeds and server log contains `method=publickey`. Also verify that a connection with a *different* (unregistered) key fails and the log contains `reason=bad-key`. Additionally verify that when both `password,publickey` methods are configured, a pubkey client authenticates via `method=publickey`.
 
 ### 13.5 Coverage
 

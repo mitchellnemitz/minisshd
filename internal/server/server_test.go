@@ -59,48 +59,79 @@ func newTestServer(t *testing.T, ln net.Listener) *Server {
 		// injects a stub sessionHandler so the field is unused.
 		SessionService: nil,
 		Log:            logging.New(&buf, "hunter2", logging.FormatLogfmt),
+		// Explicitly set password-only to make the intent clear; nil/empty
+		// would also default to ["password"] in newServerConfig.
+		Methods: auth.Methods{auth.MethodPassword},
 	}
 	return newWithDeps(cfg, &nopSession{})
 }
 
-func TestNewServerConfig_MaxAuthTriesIs3(t *testing.T) {
-	// Spec §4 mandates "3 real password attempts per connection ...
-	// count password failures only." The spec also names MaxAuthTries=4,
-	// but that literal assumed golang.org/x/crypto/ssh counts the
-	// mandatory `none` probe — which v0.51.0 no longer does (it exempts
-	// the first `none` from the counter). We honor the behavioral
-	// guarantee over the stale literal: setting MaxAuthTries=3 yields
-	// exactly three password failures under the current library.
+func TestNewServerConfig_MaxAuthTriesIs6(t *testing.T) {
+	// Spec §4 mandates MaxAuthTries = 6: password failures, publickey
+	// signature failures, and rejected-key pubkey queries all share a
+	// single combined authFailures counter in golang.org/x/crypto/ssh.
+	// The value of 6 accommodates up to 3 rejected-key probes plus 3 real
+	// credential attempts before disconnect. The §13.3 integration test
+	// TestIntegration_MaxAuthTriesCombinedCounter asserts the library's
+	// counter behavior matches this description.
 	ln := mustListen(t)
 	defer ln.Close()
 	s := newTestServer(t, ln)
 	cfg := s.newServerConfig()
-	if cfg.MaxAuthTries != 3 {
-		t.Fatalf("MaxAuthTries = %d, want 3 (spec §4 guarantees three "+
-			"password attempts; golang.org/x/crypto/ssh v0.51.0 exempts "+
-			"the initial `none` probe from the counter)", cfg.MaxAuthTries)
+	if cfg.MaxAuthTries != 6 {
+		t.Fatalf("MaxAuthTries = %d, want 6 (spec §4: combined counter for "+
+			"password failures, pubkey signature failures, and rejected-key "+
+			"queries; golang.org/x/crypto/ssh v0.51.0 exempts only the "+
+			"initial `none` probe)", cfg.MaxAuthTries)
 	}
 }
 
 func TestNewServerConfig_OnlyPasswordAuthOffered(t *testing.T) {
-	// Spec §4 method: only `password` is offered. PublicKeyCallback,
-	// KeyboardInteractiveCallback, and NoClientAuth must all be off /
-	// nil so the SSH library does not advertise them.
+	// Spec §4: when Methods is nil/empty (defaults to ["password"]), only
+	// PasswordCallback is set; PublicKeyCallback must be nil.
+	// KeyboardInteractiveCallback and NoClientAuth must be off.
 	ln := mustListen(t)
 	defer ln.Close()
-	s := newTestServer(t, ln)
+	s := newTestServer(t, ln) // newTestServer sets Methods: auth.Methods{auth.MethodPassword}
 	cfg := s.newServerConfig()
 	if cfg.NoClientAuth {
 		t.Fatal("NoClientAuth = true; spec §4 forbids no-auth")
 	}
 	if cfg.PublicKeyCallback != nil {
-		t.Fatal("PublicKeyCallback set; spec §4 forbids publickey")
+		t.Fatal("PublicKeyCallback set for password-only config; spec §4 forbids publickey when not configured")
 	}
 	if cfg.KeyboardInteractiveCallback != nil {
 		t.Fatal("KeyboardInteractiveCallback set; spec §4 forbids keyboard-interactive")
 	}
 	if cfg.PasswordCallback == nil {
 		t.Fatal("PasswordCallback nil; spec §4 requires password auth")
+	}
+}
+
+func TestNewServerConfig_PublickeyCallbackSetWhenMethodIncludesPublickey(t *testing.T) {
+	// When Methods includes publickey and a KeysetSource is provided,
+	// PublicKeyCallback must be set.
+	ln := mustListen(t)
+	defer ln.Close()
+	var buf bytes.Buffer
+	logger := logging.New(&buf, "hunter2", logging.FormatLogfmt)
+	ks := auth.NewKeysetSource(t.TempDir()+"/authorized_keys", logger)
+	cfg := Config{
+		Listener:     ln,
+		HostKey:      testSigner(t),
+		Credentials:  auth.NewCredentials("alice", "hunter2"),
+		Limiter:      ratelimit.New(ratelimit.RealClock{}),
+		Log:          logger,
+		Methods:      auth.Methods{auth.MethodPublickey},
+		KeysetSource: ks,
+	}
+	s := newWithDeps(cfg, &nopSession{})
+	sshCfg := s.newServerConfig()
+	if sshCfg.PublicKeyCallback == nil {
+		t.Fatal("PublicKeyCallback nil when Methods includes publickey")
+	}
+	if sshCfg.PasswordCallback != nil {
+		t.Fatal("PasswordCallback set for publickey-only config")
 	}
 }
 

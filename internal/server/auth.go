@@ -25,13 +25,22 @@ type rateLimiter interface {
 // from the auth package. Same testability rationale as rateLimiter.
 type credentialChecker interface {
 	Check(user, password string) (bool, string)
+	CheckUsername(user string) (bool, string)
+}
+
+// publickeyChecker is the narrow surface the publickey callback consumes
+// from the auth package. It returns the current Keyset for each invocation.
+type publickeyChecker interface {
+	Current() *auth.Keyset
 }
 
 // authLogger captures the auth-related logging methods so tests can
 // observe what was logged without re-parsing logfmt output.
+// method is "password" or "publickey"; fingerprint is the SHA-256 fingerprint
+// for publickey auth, or empty for password auth.
 type authLogger interface {
-	AuthOK(remote, user string)
-	AuthFail(remote, user, reason string, attempt int, nextDelay time.Duration)
+	AuthOK(remote, user, method, fingerprint string)
+	AuthFail(remote, user, method, reason string, attempt int, nextDelay time.Duration, fingerprint string)
 }
 
 // sleeper abstracts time.Sleep so unit tests can verify the rate-limit
@@ -71,7 +80,7 @@ func passwordCallback(
 		release(ok)
 
 		if ok {
-			log.AuthOK(remote, meta.User())
+			log.AuthOK(remote, meta.User(), "password", "")
 			return &ssh.Permissions{}, nil
 		}
 
@@ -86,7 +95,68 @@ func passwordCallback(
 		attempt := snapshot[key]
 		next := nextDelay(attempt)
 
-		log.AuthFail(remote, meta.User(), reason, attempt, next)
+		log.AuthFail(remote, meta.User(), "password", reason, attempt, next, "")
+		return nil, errAuthFailed
+	}
+}
+
+// publickeyCallback returns the ssh.ServerConfig.PublicKeyCallback wired to
+// the given limiter, credentials, keyset source, logger, and sleeper.
+//
+// Library semantics (authoritative, verified against v0.51.0 source):
+// golang.org/x/crypto/ssh calls PublicKeyCallback unconditionally on the
+// first encounter of a (user, key) pair per connection — regardless of
+// whether the client is probing (isQuery=true, no signature attached) or
+// presenting a real signature (isQuery=false). The library uses a size-1
+// cache (maxCachedPubKeys=1, ssh/server.go lines 212–238) to avoid calling
+// the callback twice for the common probe-then-sign sequence with the same
+// key. The callback has no way to distinguish a query from a real signature;
+// it fires on first encounter and its result is cached for the subsequent
+// signature attempt.
+//
+// Rate-limiter design: lim.Acquire runs for every first-seen (user, key) pair,
+// including probe-only keys the client never signs with. This is a deliberate,
+// tighter-than-OpenSSH posture: OpenSSH does not rate-limit per query;
+// minisshd does. The benefit is that an attacker probing large key sets incurs
+// backoff immediately, before presenting a signature.
+func publickeyCallback(
+	lim rateLimiter,
+	creds credentialChecker,
+	source publickeyChecker,
+	log authLogger,
+	sleep sleeper,
+) func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) {
+	return func(meta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		remote := meta.RemoteAddr().String()
+		ip := extractIP(meta.RemoteAddr())
+
+		delay, release := lim.Acquire(ip)
+		sleep(delay)
+
+		// Both calls always run; results are pre-materialized before &&.
+		userOK, userReason := creds.CheckUsername(meta.User())
+		keyOK, keyReason, fp := source.Current().Check(key)
+
+		ok := userOK && keyOK
+		release(ok)
+
+		if ok {
+			log.AuthOK(remote, meta.User(), "publickey", fp)
+			return &ssh.Permissions{}, nil
+		}
+
+		// Reason precedence: bad-user wins over bad-key (mirrors password path).
+		reason := keyReason
+		if !userOK {
+			reason = userReason
+		}
+
+		key2 := normalizeKey(ip)
+		snapshot := lim.Snapshot()
+		attempt := snapshot[key2]
+		next := nextDelay(attempt)
+
+		log.AuthFail(remote, meta.User(), "publickey", reason, attempt, next, fp)
 		return nil, errAuthFailed
 	}
 }
@@ -148,6 +218,17 @@ func nextDelay(failCount int) time.Duration {
 	return d
 }
 
+// pubkeyLogger is the narrow logging interface satisfied by *logging.Logger
+// that covers the pubkey-* event methods. It mirrors the unexported interface
+// in internal/auth/pubkey.go; both must stay in sync.
+type pubkeyLogger interface {
+	PubkeyParseError(path string, line int, errMsg string)
+	PubkeyOptionIgnored(path string, line int, option string)
+	PubkeyKeysMissing(path string)
+	PubkeyReloadOK(path string, pubkeyCount int)
+	PubkeyReloadFailed(path string, errMsg string)
+}
+
 // Static type-checks: the concrete dependencies must satisfy the
 // package-private interfaces we wire through. If a future refactor
 // renames a method, the compiler catches it here rather than in a
@@ -156,4 +237,6 @@ var (
 	_ rateLimiter       = (*ratelimit.Limiter)(nil)
 	_ credentialChecker = (*auth.Credentials)(nil)
 	_ authLogger        = (*logging.Logger)(nil)
+	_ publickeyChecker  = (*auth.KeysetSource)(nil)
+	_ pubkeyLogger      = (*logging.Logger)(nil)
 )

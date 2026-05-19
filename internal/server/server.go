@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/mitchellnemitz/minisshd/internal/auth"
 )
 
 // drainTimeout is the cap §8 allots for sessions to finish after the
@@ -65,12 +67,27 @@ func newWithDeps(cfg Config, session sessionHandler) *Server {
 // newServerConfig builds the ssh.ServerConfig the accept loop hands to
 // ssh.NewServerConn. Separated from New so unit tests can inspect the
 // fields without spinning up a listener.
+//
+// Config.Methods nil/empty defaults to ["password"], preserving pre-pubkey
+// behavior. Both PasswordCallback and PublicKeyCallback may be set
+// simultaneously; the SSH library advertises all configured methods and
+// the client picks any one.
 func (s *Server) newServerConfig() *ssh.ServerConfig {
+	methods := s.cfg.Methods
+	if len(methods) == 0 {
+		methods = auth.Methods{auth.MethodPassword}
+	}
+
 	cfg := &ssh.ServerConfig{
-		NoClientAuth:     false,
-		MaxAuthTries:     MaxAuthTries,
-		PasswordCallback: passwordCallback(s.limiter, s.creds, s.cfg.Log, s.sleep),
-		ServerVersion:    ServerVersion,
+		NoClientAuth:  false,
+		MaxAuthTries:  MaxAuthTries,
+		ServerVersion: ServerVersion,
+	}
+	if methods.Contains(auth.MethodPassword) {
+		cfg.PasswordCallback = passwordCallback(s.limiter, s.creds, s.cfg.Log, s.sleep)
+	}
+	if methods.Contains(auth.MethodPublickey) && s.cfg.KeysetSource != nil {
+		cfg.PublicKeyCallback = publickeyCallback(s.limiter, s.creds, s.cfg.KeysetSource, s.cfg.Log, s.sleep)
 	}
 	cfg.AddHostKey(s.cfg.HostKey)
 	return cfg

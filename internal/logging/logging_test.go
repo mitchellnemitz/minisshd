@@ -54,9 +54,9 @@ func TestEnvelopes(t *testing.T) {
 		{
 			name:     "listening",
 			wantName: "listening",
-			fields:   []string{"bind=", "port=", "fingerprint=", "user=", "pid="},
+			fields:   []string{"bind=", "port=", "fingerprint=", "user=", "pid=", "auth_methods=", "pubkey_count="},
 			emit: func(l *Logger) {
-				l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+				l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 			},
 		},
 		{
@@ -78,17 +78,17 @@ func TestEnvelopes(t *testing.T) {
 		{
 			name:     "auth-ok",
 			wantName: "auth-ok",
-			fields:   []string{"remote=", "user="},
+			fields:   []string{"remote=", "user=", "method="},
 			emit: func(l *Logger) {
-				l.AuthOK("192.168.1.42:51223", "alice")
+				l.AuthOK("192.168.1.42:51223", "alice", "password", "")
 			},
 		},
 		{
 			name:     "auth-fail",
 			wantName: "auth-fail",
-			fields:   []string{"remote=", "user=", "reason=", "attempt=", "next_delay="},
+			fields:   []string{"remote=", "user=", "method=", "reason=", "attempt=", "next_delay="},
 			emit: func(l *Logger) {
-				l.AuthFail("10.0.0.5:55001", "bob", "bad-user", 1, time.Second)
+				l.AuthFail("10.0.0.5:55001", "bob", "password", "bad-user", 1, time.Second, "")
 			},
 		},
 		{
@@ -181,10 +181,10 @@ func TestEnvelopes_JSON(t *testing.T) {
 		{
 			name:        "listening",
 			wantEvent:   "listening",
-			wantKeys:    []string{"ts", "level", "event", "bind", "port", "fingerprint", "user", "pid"},
-			wantIntKeys: []string{"port", "pid"},
+			wantKeys:    []string{"ts", "level", "event", "bind", "port", "fingerprint", "user", "pid", "auth_methods", "pubkey_count"},
+			wantIntKeys: []string{"port", "pid", "pubkey_count"},
 			emit: func(l *Logger) {
-				l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+				l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 			},
 		},
 		{
@@ -207,19 +207,19 @@ func TestEnvelopes_JSON(t *testing.T) {
 		{
 			name:      "auth-ok",
 			wantEvent: "auth-ok",
-			wantKeys:  []string{"ts", "level", "event", "remote", "user"},
+			wantKeys:  []string{"ts", "level", "event", "remote", "user", "method"},
 			emit: func(l *Logger) {
-				l.AuthOK("192.168.1.42:51223", "alice")
+				l.AuthOK("192.168.1.42:51223", "alice", "password", "")
 			},
 		},
 		{
 			name:        "auth-fail",
 			wantEvent:   "auth-fail",
-			wantKeys:    []string{"ts", "level", "event", "remote", "user", "reason", "attempt", "next_delay"},
+			wantKeys:    []string{"ts", "level", "event", "remote", "user", "method", "reason", "attempt", "next_delay"},
 			wantIntKeys: []string{"attempt"},
 			wantDurKeys: []string{"next_delay"},
 			emit: func(l *Logger) {
-				l.AuthFail("10.0.0.5:55001", "bob", "bad-user", 1, time.Second)
+				l.AuthFail("10.0.0.5:55001", "bob", "password", "bad-user", 1, time.Second, "")
 			},
 		},
 		{
@@ -358,7 +358,7 @@ func TestQuotingRules(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			l, buf := newTestLogger("")
-			l.AuthOK("1.2.3.4:5", tc.value)
+			l.AuthOK("1.2.3.4:5", tc.value, "password", "")
 			line := lastLine(t, buf)
 			if !strings.Contains(line, tc.wantField) {
 				t.Errorf("missing %q in %q", tc.wantField, line)
@@ -402,11 +402,11 @@ func TestPasswordScrubGuard(t *testing.T) {
 	l, buf := newTestLogger(pw)
 
 	// Push the password through every string-valued slot we can reach.
-	l.Listening(pw, 2222, pw, pw, 1)
+	l.Listening(pw, 2222, pw, pw, 1, pw, 0)
 	l.ConnOpen(pw)
 	l.ConnClose(pw, time.Second)
-	l.AuthOK(pw, pw)
-	l.AuthFail(pw, pw, pw, 1, time.Second)
+	l.AuthOK(pw, pw, pw, pw)
+	l.AuthFail(pw, pw, pw, pw, 1, time.Second, pw)
 	l.Session(pw, pw)
 	l.Reject(pw, pw)
 	l.ShutdownSignal(1, pw, pw)
@@ -427,7 +427,7 @@ func TestPasswordScrubGuard(t *testing.T) {
 // "hunter2" must pass through verbatim.
 func TestPasswordScrubDisabledWhenEmpty(t *testing.T) {
 	l, buf := newTestLogger("")
-	l.AuthOK("1.2.3.4:5", "hunter2")
+	l.AuthOK("1.2.3.4:5", "hunter2", "password", "")
 	out := buf.String()
 	if !strings.Contains(out, "user=hunter2") {
 		t.Errorf("expected literal user=hunter2 in %q", out)
@@ -455,7 +455,7 @@ func TestConcurrentEmission(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < perGoroutine; j++ {
 				l.ConnOpen("192.168.1.42:51223")
-				l.AuthFail("10.0.0.5:55001", "bob", "bad-user", id, 2*time.Second)
+				l.AuthFail("10.0.0.5:55001", "bob", "password", "bad-user", id, 2*time.Second, "")
 				l.Reject("[2001:db8::1]:51223", "x11")
 			}
 		}(i)
@@ -479,7 +479,7 @@ func TestConcurrentEmission(t *testing.T) {
 // downstream regex-based assertions in integration tests remain stable.
 func TestEnvelopeShape(t *testing.T) {
 	l, buf := newTestLogger("")
-	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 	line := lastLine(t, buf)
 	const wantPrefix = "2026-05-17T14:22:01Z INFO listening "
 	if !strings.HasPrefix(line, wantPrefix) {
@@ -493,7 +493,7 @@ func TestEnvelopeShape(t *testing.T) {
 // {"ts":... and that ts, level, event come first in that order.
 func TestJSONEnvelope_FieldOrder(t *testing.T) {
 	l, buf := newTestLoggerFmt("", FormatJSON)
-	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 	line := lastLine(t, buf)
 	if !strings.HasPrefix(line, `{"ts":`) {
 		t.Errorf("JSON line should begin with {\"ts\":, got: %q", line)
@@ -524,7 +524,7 @@ func TestJSONEnvelope_FieldOrder(t *testing.T) {
 func TestJSONEnvelope_TrailingNewline(t *testing.T) {
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.ConnOpen("1.2.3.4:5")
-	l.AuthOK("1.2.3.4:5", "alice")
+	l.AuthOK("1.2.3.4:5", "alice", "password", "")
 	out := buf.String()
 	if !strings.HasSuffix(out, "\n") {
 		t.Fatalf("output does not end with newline: %q", out)
@@ -561,7 +561,7 @@ func TestJSON_ErrorOmitsEmptyRemote(t *testing.T) {
 // round-trip correctly through JSON encoding.
 func TestJSON_StringEscape(t *testing.T) {
 	l, buf := newTestLoggerFmt("", FormatJSON)
-	l.AuthOK("1.2.3.4:5", `user"with quote`)
+	l.AuthOK("1.2.3.4:5", `user"with quote`, "password", "")
 	line := lastLine(t, buf)
 	var m map[string]any
 	if err := json.Unmarshal([]byte(line), &m); err != nil {
@@ -606,11 +606,11 @@ func TestJSON_DurationWholeSecondsHasDecimal(t *testing.T) {
 // each emitted line is valid JSON.
 func TestJSON_LineIsValidJSON(t *testing.T) {
 	l, buf := newTestLoggerFmt("", FormatJSON)
-	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711)
+	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 	l.ConnOpen("1.2.3.4:5")
 	l.ConnClose("1.2.3.4:5", time.Second)
-	l.AuthOK("1.2.3.4:5", "alice")
-	l.AuthFail("1.2.3.4:5", "bob", "bad-password", 2, 2*time.Second)
+	l.AuthOK("1.2.3.4:5", "alice", "password", "")
+	l.AuthFail("1.2.3.4:5", "bob", "password", "bad-password", 2, 2*time.Second, "")
 	l.Session("1.2.3.4:5", "shell")
 	l.Reject("1.2.3.4:5", "x11")
 	l.ShutdownSignal(1234, "HUP", "channel-close")
@@ -636,11 +636,11 @@ func TestJSON_ScrubWithQuoteInPassword(t *testing.T) {
 	const pw = "\"hello\"world" // contains literal double-quotes
 	l, buf := newTestLoggerFmt(pw, FormatJSON)
 
-	l.Listening(pw, 2222, pw, pw, 1)
+	l.Listening(pw, 2222, pw, pw, 1, pw, 0)
 	l.ConnOpen(pw)
 	l.ConnClose(pw, time.Second)
-	l.AuthOK(pw, pw)
-	l.AuthFail(pw, pw, pw, 1, time.Second)
+	l.AuthOK(pw, pw, pw, pw)
+	l.AuthFail(pw, pw, pw, pw, 1, time.Second, pw)
 	l.Session(pw, pw)
 	l.Reject(pw, pw)
 	l.ShutdownSignal(1, pw, pw)
@@ -679,7 +679,7 @@ func TestJSON_ScrubWithBackslashInPassword(t *testing.T) {
 	const pw = `back\slash`
 	l, buf := newTestLoggerFmt(pw, FormatJSON)
 
-	l.AuthOK(pw, pw)
+	l.AuthOK(pw, pw, pw, pw)
 	l.Error(pw, pw)
 
 	out := buf.String()
@@ -709,7 +709,7 @@ func TestJSON_ScrubWithControlCharInPassword(t *testing.T) {
 	pw := "hi\nbye"
 	l, buf := newTestLoggerFmt(pw, FormatJSON)
 
-	l.AuthOK("1.2.3.4:5", pw)
+	l.AuthOK("1.2.3.4:5", pw, "password", "")
 
 	out := buf.String()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
@@ -727,6 +727,79 @@ func TestJSON_ScrubWithControlCharInPassword(t *testing.T) {
 	}
 }
 
+// TestLogger_PubkeyEvents_AllFiveEmit calls all five Pubkey* methods and
+// verifies each emits exactly one line containing the expected event name.
+func TestLogger_PubkeyEvents_AllFiveEmit(t *testing.T) {
+	cases := []struct {
+		name      string
+		wantEvent string
+		emit      func(l *Logger)
+	}{
+		{
+			name:      "PubkeyParseError",
+			wantEvent: "pubkey-parse-error",
+			emit:      func(l *Logger) { l.PubkeyParseError("/tmp/keys", 3, "bad line") },
+		},
+		{
+			name:      "PubkeyOptionIgnored",
+			wantEvent: "pubkey-option-ignored",
+			emit:      func(l *Logger) { l.PubkeyOptionIgnored("/tmp/keys", 7, `command="ls"`) },
+		},
+		{
+			name:      "PubkeyKeysMissing",
+			wantEvent: "pubkey-keys-missing",
+			emit:      func(l *Logger) { l.PubkeyKeysMissing("/tmp/keys") },
+		},
+		{
+			name:      "PubkeyReloadOK",
+			wantEvent: "pubkey-reload-ok",
+			emit:      func(l *Logger) { l.PubkeyReloadOK("/tmp/keys", 2) },
+		},
+		{
+			name:      "PubkeyReloadFailed",
+			wantEvent: "pubkey-reload-failed",
+			emit:      func(l *Logger) { l.PubkeyReloadFailed("/tmp/keys", "permission denied") },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l, buf := newTestLogger("")
+			tc.emit(l)
+			line := lastLine(t, buf)
+			if !strings.Contains(line, tc.wantEvent) {
+				t.Errorf("expected event %q in emitted line; got %q", tc.wantEvent, line)
+			}
+			if !eventLineRE.MatchString(line) {
+				t.Errorf("line does not match envelope regex: %q", line)
+			}
+		})
+	}
+}
+
+// TestLogger_PubkeyEvents_PasswordScrubStillApplies passes a password whose
+// bytes appear inside an argument to each of the five Pubkey* methods and
+// asserts that the scrub redacts the password in every emitted line.
+func TestLogger_PubkeyEvents_PasswordScrubStillApplies(t *testing.T) {
+	const pw = "hunter2"
+	l, buf := newTestLogger(pw)
+
+	// Embed the password in every string argument of every Pubkey* method.
+	l.PubkeyParseError(pw, 1, pw)
+	l.PubkeyOptionIgnored(pw, 2, pw)
+	l.PubkeyKeysMissing(pw)
+	l.PubkeyReloadOK(pw, 5)
+	l.PubkeyReloadFailed(pw, pw)
+
+	out := buf.String()
+	if strings.Contains(out, pw) {
+		t.Fatalf("password %q leaked into pubkey event output:\n%s", pw, out)
+	}
+	if !strings.Contains(out, redacted) {
+		t.Errorf("expected %q redaction marker in output:\n%s", redacted, out)
+	}
+}
+
 // TestLogfmt_PasswordScrubUnchanged is a regression guard: with the new
 // scrubs [][]byte field, the existing logfmt password-scrub behavior must
 // be byte-for-byte identical to the old l.password string field approach.
@@ -734,11 +807,11 @@ func TestLogfmt_PasswordScrubUnchanged(t *testing.T) {
 	const pw = "hunter2"
 	l, buf := newTestLoggerFmt(pw, FormatLogfmt)
 
-	l.Listening(pw, 2222, pw, pw, 1)
+	l.Listening(pw, 2222, pw, pw, 1, pw, 0)
 	l.ConnOpen(pw)
 	l.ConnClose(pw, time.Second)
-	l.AuthOK(pw, pw)
-	l.AuthFail(pw, pw, pw, 1, time.Second)
+	l.AuthOK(pw, pw, pw, pw)
+	l.AuthFail(pw, pw, pw, pw, 1, time.Second, pw)
 	l.Session(pw, pw)
 	l.Reject(pw, pw)
 	l.ShutdownSignal(1, pw, pw)

@@ -94,6 +94,53 @@ func TestCredentials_Check_NoShortCircuit(t *testing.T) {
 	}
 }
 
+// TestCredentials_CheckUsername_OnlyUsernamePath verifies CheckUsername returns
+// (true,"") for the correct user and (false,ReasonBadUser) for a wrong user,
+// without evaluating the password at all.
+func TestCredentials_CheckUsername_OnlyUsernamePath(t *testing.T) {
+	c := NewCredentials("alice", "hunter2")
+
+	ok, reason := c.CheckUsername("alice")
+	if !ok || reason != "" {
+		t.Errorf("CheckUsername(matching) = (%v,%q), want (true,\"\")", ok, reason)
+	}
+
+	ok, reason = c.CheckUsername("mallory")
+	if ok || reason != ReasonBadUser {
+		t.Errorf("CheckUsername(wrong) = (%v,%q), want (false,%q)", ok, reason, ReasonBadUser)
+	}
+}
+
+// TestCredentials_CheckUsername_AlwaysHashes verifies that exactly one
+// subtle.ConstantTimeCompare call is made per CheckUsername invocation (the
+// username digest comparison; no password comparison). This is the load-bearing
+// constant-time invariant for the publickey auth path: the username check must
+// always run one compare regardless of whether the username matches.
+func TestCredentials_CheckUsername_AlwaysHashes(t *testing.T) {
+	c := NewCredentials("alice", "hunter2")
+	cases := []struct {
+		name string
+		user string
+	}{
+		{"matching-user", "alice"},
+		{"wrong-user", "mallory"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int
+			counting := func(a, b []byte) int {
+				calls++
+				return subtle.ConstantTimeCompare(a, b)
+			}
+			c.checkUsernameWith(tc.user, counting)
+			if calls != 1 {
+				t.Errorf("expected exactly 1 ConstantTimeCompare call per CheckUsername; got %d", calls)
+			}
+		})
+	}
+}
+
 // TestCredentials_Check_TimingEnvelope is a loose timing assertion that
 // wrong-user and wrong-password paths complete within the same envelope.
 // The strict statistical Mann-Whitney test described in spec §13.2 lives

@@ -21,7 +21,17 @@ jobs:
 
       - name: gofmt
         run: |
-          out=$(gofmt -l .)
+          set -o pipefail
+          # gofmt -l . prints reformat candidates on stdout and parse errors on
+          # stderr (with exit 2). Capture both so we surface either failure
+          # mode; assigning via $(...) would otherwise mask gofmt's non-zero
+          # exit because `set -e` does not trigger on assignment.
+          if ! out=$(gofmt -l . 2>&1); then
+            rc=$?
+            echo "::error::gofmt exited $rc"
+            echo "$out"
+            exit "$rc"
+          fi
           if [ -n "$out" ]; then
             echo "::error::gofmt would reformat these files:"
             echo "$out"

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
@@ -61,6 +62,7 @@ func isolateHome(t *testing.T) string {
 	t.Setenv("HOME", h)
 	unsetenv(t, "MINISSHD_PASS")
 	unsetenv(t, "MINISSHD_USER")
+	unsetenv(t, "MINISSHD_LOG_FORMAT")
 	return h
 }
 
@@ -642,6 +644,147 @@ func TestRun_ExitCodeConstants(t *testing.T) {
 			t.Errorf("%s = %d, want %d", k, got[k], v)
 		}
 	}
+}
+
+// runUntilListeningJSON is like runUntilListening but waits for the JSON
+// sentinel "event":"listening" instead of the logfmt sentinel " listening ".
+// Used by tests that start the server with --log-format json.
+func runUntilListeningJSON(t *testing.T, args []string) (stdoutStr, stderrStr string, rc int) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stdout := &syncBuffer{}
+	stderr := &syncBuffer{}
+	done := make(chan int, 1)
+	go func() {
+		done <- run(ctx, args, stdout, stderr)
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(stdout.String(), `"event":"listening"`) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case rc = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("run() did not return within 5 s after cancel; stdout=%q stderr=%q",
+			stdout.String(), stderr.String())
+	}
+	return stdout.String(), stderr.String(), rc
+}
+
+// TestRun_LogFormatUnknownValue asserts that --log-format xml exits 2 and
+// mentions the rejected value.
+func TestRun_LogFormatUnknownValue(t *testing.T) {
+	isolateHome(t)
+	args := append([]string{}, defaultGoodArgs()...)
+	args = append(args, "--log-format", "xml")
+	_, stderr, rc := runToCompletion(t, args)
+	if rc != exitBadConfig {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitBadConfig, stderr)
+	}
+	if !strings.Contains(stderr, "minisshd:") {
+		t.Errorf("stderr should contain 'minisshd:' prefix; got %q", stderr)
+	}
+	if !strings.Contains(stderr, "xml") {
+		t.Errorf("stderr should name the rejected value 'xml'; got %q", stderr)
+	}
+}
+
+// TestRun_LogFormatExplicitEmpty asserts that --log-format "" exits 2.
+func TestRun_LogFormatExplicitEmpty(t *testing.T) {
+	isolateHome(t)
+	args := append([]string{}, defaultGoodArgs()...)
+	args = append(args, "--log-format", "")
+	_, _, rc := runToCompletion(t, args)
+	if rc != exitBadConfig {
+		t.Fatalf("rc=%d want %d", rc, exitBadConfig)
+	}
+}
+
+// TestRun_LogFormatEnvIsRespected sets MINISSHD_LOG_FORMAT=json and asserts
+// the first log line is valid JSON.
+func TestRun_LogFormatEnvIsRespected(t *testing.T) {
+	isolateHome(t)
+	t.Setenv("MINISSHD_LOG_FORMAT", "json")
+	stdout, _, rc := runUntilListeningJSON(t, defaultGoodArgs())
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stdout=%q", rc, exitOK, stdout)
+	}
+	// Find a line that contains the listening event.
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, `"event":"listening"`) {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(line), &m); err != nil {
+				t.Errorf("listening event is not valid JSON: %q — %v", line, err)
+			}
+			return
+		}
+	}
+	t.Errorf("no listening event found in JSON output; stdout=%q", stdout)
+}
+
+// TestRun_LogFormatFlagWinsOverEnv sets MINISSHD_LOG_FORMAT=json but passes
+// --log-format logfmt; asserts the output is logfmt.
+func TestRun_LogFormatFlagWinsOverEnv(t *testing.T) {
+	isolateHome(t)
+	t.Setenv("MINISSHD_LOG_FORMAT", "json")
+	args := append([]string{}, defaultGoodArgs()...)
+	args = append(args, "--log-format", "logfmt")
+	stdout, stderr, rc := runUntilListening(t, args)
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitOK, stderr)
+	}
+	if !strings.Contains(stdout, " listening ") {
+		t.Errorf("expected logfmt listening event; stdout=%q", stdout)
+	}
+	// Ensure output does not look like JSON.
+	if strings.Contains(stdout, `"event":"listening"`) {
+		t.Errorf("output should be logfmt, not JSON; stdout=%q", stdout)
+	}
+}
+
+// TestRun_LogFormatBannerUnaffected starts with --log-format json and no
+// --pass and asserts the Password: banner appears before the JSON listening
+// event, unaffected by the format flag.
+func TestRun_LogFormatBannerUnaffected(t *testing.T) {
+	isolateHome(t)
+	args := []string{
+		"--port", "0",
+		"--bind", "127.0.0.1",
+		"--user", "testuser",
+		"--shell", "/bin/sh",
+		"--log-format", "json",
+	}
+	stdout, stderr, rc := runUntilListeningJSON(t, args)
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitOK, stderr)
+	}
+	// Banner must appear.
+	if !strings.Contains(stdout, "Password: ") {
+		t.Errorf("expected Password: banner; stdout=%q", stdout)
+	}
+	// Banner must precede the listening JSON event.
+	bannerIdx := strings.Index(stdout, "Password: ")
+	listeningIdx := strings.Index(stdout, `"event":"listening"`)
+	if bannerIdx < 0 || listeningIdx < 0 || bannerIdx >= listeningIdx {
+		t.Errorf("banner should appear before listening JSON event; stdout=%q", stdout)
+	}
+	// The listening line must be valid JSON.
+	for _, line := range strings.Split(stdout, "\n") {
+		if strings.Contains(line, `"event":"listening"`) {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(line), &m); err != nil {
+				t.Errorf("listening line not valid JSON: %q — %v", line, err)
+			}
+			return
+		}
+	}
+	t.Errorf("no listening JSON event found; stdout=%q", stdout)
 }
 
 // guard against accidental package init

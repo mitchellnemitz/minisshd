@@ -275,7 +275,7 @@ func TestPasswordCallback_AuthOKDoesNotLeakPasswordToLogger(t *testing.T) {
 	lim := newFakeLimiterWithKey("127.0.0.1")
 	creds := &fakeCreds{ok: true, reason: ""}
 	var buf bytes.Buffer
-	realLog := logging.New(&buf, "supersecret123")
+	realLog := logging.New(&buf, "supersecret123", logging.FormatLogfmt)
 	sleeper := &recordingSleeper{}
 
 	cb := passwordCallback(lim, creds, realLog, sleeper.sleep)

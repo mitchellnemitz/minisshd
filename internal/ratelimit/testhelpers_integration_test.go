@@ -26,10 +26,11 @@ import (
 )
 
 type testServerOptions struct {
-	user     string
-	password string
-	shell    string
-	bind     string
+	user      string
+	password  string
+	shell     string
+	bind      string
+	logFormat logging.Format
 }
 
 type testServer struct {
@@ -74,7 +75,7 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 	}
 
 	logBuf := &syncBuffer{}
-	logger := logging.New(logBuf, opts.password)
+	logger := logging.New(logBuf, opts.password, opts.logFormat)
 	creds := auth.NewCredentials(opts.user, opts.password)
 	limiter := ratelimit.New(ratelimit.RealClock{})
 

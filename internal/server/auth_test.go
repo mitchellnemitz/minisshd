@@ -94,6 +94,13 @@ func (c *fakeCreds) Check(user, password string) (bool, string) {
 	return c.ok, c.reason
 }
 
+func (c *fakeCreds) CheckUsername(user string) (bool, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	return c.ok, c.reason
+}
+
 type recordingAuthLogger struct {
 	mu       sync.Mutex
 	okCalls  []string
@@ -101,21 +108,21 @@ type recordingAuthLogger struct {
 }
 
 type failEntry struct {
-	remote, user, reason string
-	attempt              int
-	nextDelay            time.Duration
+	remote, user, method, reason, fingerprint string
+	attempt                                   int
+	nextDelay                                 time.Duration
 }
 
-func (r *recordingAuthLogger) AuthOK(remote, user string) {
+func (r *recordingAuthLogger) AuthOK(remote, user, method, fingerprint string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.okCalls = append(r.okCalls, remote+":"+user)
+	r.okCalls = append(r.okCalls, remote+":"+user+":"+method)
 }
 
-func (r *recordingAuthLogger) AuthFail(remote, user, reason string, attempt int, nextDelay time.Duration) {
+func (r *recordingAuthLogger) AuthFail(remote, user, method, reason string, attempt int, nextDelay time.Duration, fingerprint string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.failCall = &failEntry{remote, user, reason, attempt, nextDelay}
+	r.failCall = &failEntry{remote, user, method, reason, fingerprint, attempt, nextDelay}
 }
 
 // recordingSleeper records every Sleep duration so tests can confirm

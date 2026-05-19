@@ -64,18 +64,18 @@ func TestIntegration_WrongPasswordLogsBadPassword(t *testing.T) {
 	}
 }
 
-// TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt
-// proves the server enforces a server-side password-attempt cap
-// regardless of how many the client offers. We give the client 10
-// wrong-password attempts via ssh.RetryableAuthMethod and expect the
-// connection to be closed after exactly 3 failed attempts.
+// TestIntegration_SixWrongPasswordsCloseConnection proves the server enforces
+// a server-side password-attempt cap regardless of how many the client offers.
+// We give the client 10 wrong-password attempts via ssh.RetryableAuthMethod
+// and expect the connection to be closed after exactly 6 failed attempts.
 //
-// Spec §4 mandates "3 real password attempts per connection". Current
-// golang.org/x/crypto/ssh exempts the first `none` probe from the
-// MaxAuthTries counter (see ssh/server.go: "Allow initial attempt of
-// 'none' without penalty."), so MaxAuthTries=3 delivers exactly three
-// real password attempts before disconnect — see commit 6438db7.
-func TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt(t *testing.T) {
+// Spec §4: MaxAuthTries = 6 (combined counter for password failures, publickey
+// signature failures, and rejected-key queries). golang.org/x/crypto/ssh
+// v0.51.0 exempts only the initial `none` probe from the counter, so
+// MaxAuthTries=6 delivers six real password attempts before disconnect.
+// See also TestIntegration_MaxAuthTriesCombinedCounter for the combined-counter
+// assertion (publickey probes + password failures sharing a single counter).
+func TestIntegration_SixWrongPasswordsCloseConnection(t *testing.T) {
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -90,20 +90,20 @@ func TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt(t *test
 			),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         60 * time.Second,
+		Timeout:         120 * time.Second,
 	}
 	_, err := ssh.Dial("tcp", ts.addr, cfg)
 	if err == nil {
 		t.Fatalf("expected Dial to fail")
 	}
 
-	if !waitForLog(t, ts.logBuf, "conn-close", 30*time.Second) {
+	if !waitForLog(t, ts.logBuf, "conn-close", 120*time.Second) {
 		t.Fatalf("expected conn-close in log:\n%s", ts.logBuf.String())
 	}
 
 	got := countLogOccurrences(ts.logBuf, "reason=bad-password")
-	if got != 3 {
-		t.Fatalf("want exactly 3 bad-password events; got %d; log:\n%s", got, ts.logBuf.String())
+	if got != 6 {
+		t.Fatalf("want exactly 6 bad-password events; got %d; log:\n%s", got, ts.logBuf.String())
 	}
 	// Sanity: client's error mentions auth.
 	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "auth") &&

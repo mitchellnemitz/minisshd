@@ -63,6 +63,8 @@ func isolateHome(t *testing.T) string {
 	unsetenv(t, "MINISSHD_PASS")
 	unsetenv(t, "MINISSHD_USER")
 	unsetenv(t, "MINISSHD_LOG_FORMAT")
+	unsetenv(t, "MINISSHD_AUTH")
+	unsetenv(t, "MINISSHD_AUTHORIZED_KEYS")
 	return h
 }
 
@@ -785,6 +787,121 @@ func TestRun_LogFormatBannerUnaffected(t *testing.T) {
 		}
 	}
 	t.Errorf("no listening JSON event found; stdout=%q", stdout)
+}
+
+// TestRun_AuthFlagValidation asserts that invalid --auth values produce exit 2
+// and no listening event. Tests: empty, unknown, duplicate, and uppercase
+// method names (case-sensitive).
+func TestRun_AuthFlagValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		auth string
+	}{
+		{"empty-string", ""},
+		{"unknown-method", "bogus"},
+		{"password-plus-unknown", "password,bogus"},
+		{"duplicate", "password,password"},
+		{"uppercase-rejected", "PASSWORD"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			isolateHome(t)
+			args := append([]string{}, defaultGoodArgs()...)
+			args = append(args, "--auth", tc.auth)
+			_, stderr, rc := runToCompletion(t, args)
+			if rc != exitBadConfig {
+				t.Fatalf("--auth=%q: rc=%d want %d; stderr=%q", tc.auth, rc, exitBadConfig, stderr)
+			}
+			// Must not have bound a listener (no listening event).
+			if strings.Contains(stderr, " listening ") {
+				t.Errorf("--auth=%q: server should not have started; stderr=%q", tc.auth, stderr)
+			}
+		})
+	}
+}
+
+// TestRun_AuthPublickeyOnlyNoKeysNoPasswordExitsBadConfig verifies the
+// unauthenticable-configuration check: --auth=publickey with no
+// authorized-keys file and no password exits 2 with a clear message.
+func TestRun_AuthPublickeyOnlyNoKeysNoPasswordExitsBadConfig(t *testing.T) {
+	isolateHome(t)
+	args := []string{
+		"--port", "0",
+		"--bind", "127.0.0.1",
+		"--user", "testuser",
+		"--shell", "/bin/sh",
+		"--auth", "publickey",
+		// no --authorized-keys → file absent → zero keys
+		// no --pass → publickey-only sentinel chosen but still zero keys
+	}
+	_, stderr, rc := runToCompletion(t, args)
+	if rc != exitBadConfig {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitBadConfig, stderr)
+	}
+	if !strings.Contains(stderr, "publickey") {
+		t.Errorf("stderr should mention publickey config issue; got %q", stderr)
+	}
+}
+
+// TestRun_AuthPublickeyMissingKeysFileIsWarning verifies that when --auth
+// includes publickey but the authorized-keys file is absent, startup
+// proceeds with a WARN log (pubkey-keys-missing). The server must reach
+// the listening state since password auth is also available to rescue it.
+func TestRun_AuthPublickeyMissingKeysFileIsWarning(t *testing.T) {
+	isolateHome(t)
+	args := []string{
+		"--port", "0",
+		"--bind", "127.0.0.1",
+		"--pass", "hunter2",
+		"--user", "testuser",
+		"--shell", "/bin/sh",
+		"--auth", "password,publickey",
+		"--authorized-keys", "/nonexistent/path/authorized_keys",
+	}
+	stdout, stderr, rc := runUntilListening(t, args)
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stderr=%q stdout=%q", rc, exitOK, stderr, stdout)
+	}
+	// The server must have reached the listening state.
+	if !strings.Contains(stdout, " listening ") {
+		t.Errorf("expected listening event; stdout=%q", stdout)
+	}
+	// The server must have emitted a pubkey-keys-missing WARN (logfmt).
+	if !strings.Contains(stdout, "pubkey-keys-missing") {
+		t.Errorf("expected pubkey-keys-missing WARN event in log; stdout=%q", stdout)
+	}
+}
+
+// TestRun_DefaultBehaviorMatchesBaseline asserts that running with no new
+// pubkey flags produces an identical observable baseline: the listening
+// event includes auth_methods=password and pubkey_count=0, no pubkey-*
+// events appear, and the exit code is 0 — exactly matching pre-pubkey
+// behavior.
+func TestRun_DefaultBehaviorMatchesBaseline(t *testing.T) {
+	isolateHome(t)
+	stdout, stderr, rc := runUntilListening(t, defaultGoodArgs())
+	if rc != exitOK {
+		t.Fatalf("rc=%d want %d; stderr=%q", rc, exitOK, stderr)
+	}
+	// auth_methods must default to password.
+	if !strings.Contains(stdout, "auth_methods=password") {
+		t.Errorf("expected auth_methods=password in listening event; stdout=%q", stdout)
+	}
+	// pubkey_count must be 0.
+	if !strings.Contains(stdout, "pubkey_count=0") {
+		t.Errorf("expected pubkey_count=0 in listening event; stdout=%q", stdout)
+	}
+	// No pubkey-* events must appear.
+	for _, unexpected := range []string{"pubkey-keys-missing", "pubkey-parse-error", "pubkey-reload"} {
+		if strings.Contains(stdout, unexpected) {
+			t.Errorf("unexpected pubkey event %q in default mode; stdout=%q", unexpected, stdout)
+		}
+	}
+	// No Password: banner must appear (--pass was supplied via defaultGoodArgs).
+	if strings.Contains(stdout, "Password:") {
+		t.Errorf("unexpected Password: banner when --pass is supplied; stdout=%q", stdout)
+	}
 }
 
 // guard against accidental package init

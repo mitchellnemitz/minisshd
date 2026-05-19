@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -49,13 +51,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("minisshd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		port          = fs.Int("port", 2222, "TCP port to listen on")
-		bind          = fs.String("bind", "0.0.0.0", "IP address to bind to")
-		passFlag      = fs.String("pass", "", "Password clients must present (overrides MINISSHD_PASS)")
-		userFlag      = fs.String("user", "", "Username clients must present (overrides MINISSHD_USER)")
-		shellFlag     = fs.String("shell", "", "Shell binary for interactive sessions")
-		hostKey       = fs.String("host-key", "", "Path to the persistent host key (default ~/.minisshd/host_key)")
-		logFormatFlag = fs.String("log-format", "", "Structured-log format: logfmt (default) or json")
+		port               = fs.Int("port", 2222, "TCP port to listen on")
+		bind               = fs.String("bind", "0.0.0.0", "IP address to bind to")
+		passFlag           = fs.String("pass", "", "Password clients must present (overrides MINISSHD_PASS)")
+		userFlag           = fs.String("user", "", "Username clients must present (overrides MINISSHD_USER)")
+		shellFlag          = fs.String("shell", "", "Shell binary for interactive sessions")
+		hostKey            = fs.String("host-key", "", "Path to the persistent host key (default ~/.minisshd/host_key)")
+		logFormatFlag      = fs.String("log-format", "", "Structured-log format: logfmt (default) or json")
+		authFlag           = fs.String("auth", "", "Comma-separated SSH auth methods: password, publickey (overrides MINISSHD_AUTH)")
+		authorizedKeysFlag = fs.String("authorized-keys", "", "Path to authorized-keys file (overrides MINISSHD_AUTHORIZED_KEYS)")
 	)
 	if err := fs.Parse(args); err != nil {
 		// flag.ContinueOnError already printed the usage to stderr.
@@ -65,7 +69,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// Distinguish "flag explicitly set" from "default" so an explicit
 	// --pass="" can be rejected per spec §2 step 2. flag.Visit only
 	// iterates flags that the user supplied.
-	var passSet, userSet, hostKeySet, logFormatSet bool
+	var passSet, userSet, hostKeySet, logFormatSet, authSet, authorizedKeysSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "pass":
@@ -76,6 +80,10 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			hostKeySet = true
 		case "log-format":
 			logFormatSet = true
+		case "auth":
+			authSet = true
+		case "authorized-keys":
+			authorizedKeysSet = true
 		}
 	})
 
@@ -92,7 +100,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "minisshd: %v\n", err)
 		return exitBadConfig
 	}
-	generatePasswordAtStartup := password == ""
+
+	// §2 step 2b — resolve auth methods.
+	envAuth, envAuthSet := os.LookupEnv("MINISSHD_AUTH")
+	methods, err := auth.ResolveMethods(*authFlag, authSet, envAuth, envAuthSet)
+	if err != nil {
+		fmt.Fprintf(stderr, "minisshd: %v\n", err)
+		return exitBadConfig
+	}
 
 	// §2 step 3 — username.
 	envUser := os.Getenv("MINISSHD_USER")
@@ -146,6 +161,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// §2 step 5b — resolve the authorized-keys path now (validation only;
+	// the actual Load happens after the real logger is built so all key-load
+	// warning events flow through a logger that already has the password scrub
+	// configured). This is the single-load design: no tmpLogger, no re-load.
+	// Per §9 / CLAUDE.md: the password-scrub invariant must hold for every
+	// emitted line, including pubkey-* events. A tmpLogger with an empty-string
+	// scrub would emit those events without redaction.
+	var keysPath string
+	if methods.Contains(auth.MethodPublickey) {
+		envKeys, envKeysSet := os.LookupEnv("MINISSHD_AUTHORIZED_KEYS")
+		keysPath, err = auth.ResolveAuthorizedKeysPath(*authorizedKeysFlag, authorizedKeysSet, envKeys, envKeysSet)
+		if err != nil {
+			fmt.Fprintf(stderr, "minisshd: %v\n", err)
+			return exitBadConfig
+		}
+	}
+
 	// §2 step 6 — host key.
 	signer, fingerprint, err := hostkey.LoadOrGenerate(*hostKey)
 	if err != nil {
@@ -184,8 +216,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer listener.Close()
 
 	// §2 step 8 — generate password (if necessary) and emit the banner.
-	// This is the only path that writes the password to stdout. Earlier
-	// failures exit without ever reaching this line.
+	// Only when --auth includes "password" and no password was supplied.
+	// In publickey-only mode, no password is generated and no banner is printed.
+	generatePasswordAtStartup := password == "" && methods.Contains(auth.MethodPassword)
 	if generatePasswordAtStartup {
 		password, err = auth.GeneratePassword()
 		if err != nil {
@@ -193,6 +226,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return exitInternalError
 		}
 		fmt.Fprintf(stdout, "Password: %s\n", password)
+	} else if !methods.Contains(auth.MethodPassword) && password == "" {
+		// Publickey-only mode with no password supplied: use a random sentinel
+		// so the password-callback path (even if somehow invoked) cannot succeed,
+		// and the password scrub has a non-empty needle.
+		sentinel := make([]byte, 32)
+		if _, err := rand.Read(sentinel); err != nil {
+			fmt.Fprintf(stderr, "minisshd: generate sentinel: %v\n", err)
+			return exitInternalError
+		}
+		password = hex.EncodeToString(sentinel)
 	}
 
 	// Build the cached credential digests and the logger with the active
@@ -201,16 +244,50 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	creds := auth.NewCredentials(username, password)
 	logger := logging.New(stdout, password, logFormat)
 
-	// §2 step 9 — log the listening event with the actually-bound port
-	// (so --port 0 still emits a meaningful number).
+	// §2 step 5b continued — single-load of the authorized-keys file, now
+	// that the real logger (with password scrub) is available. This is the
+	// only Load call; the tmpLogger/double-load pattern has been removed to
+	// preserve the §9 scrub invariant for all pubkey-* events.
+	var keysetSource *auth.KeysetSource
+	if methods.Contains(auth.MethodPublickey) {
+		keysetSource = auth.NewKeysetSource(keysPath, logger)
+		if loadErr := keysetSource.Load(); loadErr != nil {
+			fmt.Fprintf(stderr, "minisshd: authorized-keys %q: %v\n", keysPath, loadErr)
+			return exitFSFailure
+		}
+		// §2 step 2c check — unauthenticable configuration (moved here so it
+		// follows the single load; exit code 2 is correct per spec §11).
+		if !methods.Contains(auth.MethodPassword) && keysetSource.Count() == 0 {
+			fmt.Fprintf(stderr, "minisshd: --auth=publickey but no keys loaded; provide an authorized-keys file or add 'password' to --auth\n")
+			return exitBadConfig
+		}
+	}
+
+	// §2 step 9 — log the listening event with the actually-bound port.
 	boundPort := listener.Addr().(*net.TCPAddr).Port
-	logger.Listening(bindIP.String(), boundPort, fingerprint, username, os.Getpid())
+	pubkeyCount := 0
+	if keysetSource != nil {
+		pubkeyCount = keysetSource.Count()
+	}
+	logger.Listening(bindIP.String(), boundPort, fingerprint, username, os.Getpid(), methods.String(), pubkeyCount)
+
+	// SIGHUP handler for authorized-keys reload (only when publickey is configured).
+	if methods.Contains(auth.MethodPublickey) && keysetSource != nil {
+		sighupCh := make(chan os.Signal, 1)
+		signal.Notify(sighupCh, syscall.SIGHUP)
+		go func() {
+			for {
+				select {
+				case <-sighupCh:
+					_ = keysetSource.Reload()
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Construct the server and run its accept loop against ctx.
-	// internal/server owns the connection-level lifecycle (handshake,
-	// rate-limited password callback, channel routing, conn-open/close
-	// logging, drain on ctx-cancel). internal/session owns the §8 PTY/
-	// exec/SFTP machinery per accepted session channel.
 	srv := server.New(server.Config{
 		Listener:       listener,
 		HostKey:        signer,
@@ -218,6 +295,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Limiter:        ratelimit.New(ratelimit.RealClock{}),
 		SessionService: &session.Service{Shell: shellPath, Log: logger},
 		Log:            logger,
+		Methods:        methods,
+		KeysetSource:   keysetSource,
 	})
 	if err := srv.Serve(ctx); err != nil {
 		logger.Error(err.Error(), "")

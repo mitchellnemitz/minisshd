@@ -190,14 +190,17 @@ func itoa(n int) string {
 // --- Event methods (spec §9) ---------------------------------------------
 
 // Listening emits the `listening` event (INFO) with the bound address, port,
-// host-key fingerprint, expected username and PID.
-func (l *Logger) Listening(bind string, port int, fingerprint, user string, pid int) {
+// host-key fingerprint, expected username, PID, auth method list, and public
+// key count.
+func (l *Logger) Listening(bind string, port int, fingerprint, user string, pid int, authMethods string, pubkeyCount int) {
 	l.emit(levelInfo, "listening", []field{
 		strField("bind", bind),
 		intField("port", port),
 		strField("fingerprint", fingerprint),
 		strField("user", user),
 		intField("pid", pid),
+		strField("auth_methods", authMethods),
+		intField("pubkey_count", pubkeyCount),
 	})
 }
 
@@ -216,25 +219,39 @@ func (l *Logger) ConnClose(remote string, duration time.Duration) {
 	})
 }
 
-// AuthOK emits the `auth-ok` event (INFO).
-func (l *Logger) AuthOK(remote, user string) {
-	l.emit(levelInfo, "auth-ok", []field{
+// AuthOK emits the `auth-ok` event (INFO). method is "password" or "publickey".
+// fingerprint is the SHA-256 fingerprint of the presented key for publickey auth,
+// or empty for password auth (in which case the field is omitted from output).
+func (l *Logger) AuthOK(remote, user, method, fingerprint string) {
+	fields := []field{
 		strField("remote", remote),
 		strField("user", user),
-	})
+		strField("method", method),
+	}
+	if fingerprint != "" {
+		fields = append(fields, strField("fingerprint", fingerprint))
+	}
+	l.emit(levelInfo, "auth-ok", fields)
 }
 
-// AuthFail emits the `auth-fail` event (WARN). reason is "bad-user" or
-// "bad-password"; attempt is the per-IP cumulative fail count after this
-// failure; nextDelay is the sleep the next attempt from this IP will incur.
-func (l *Logger) AuthFail(remote, user, reason string, attempt int, nextDelay time.Duration) {
-	l.emit(levelWarn, "auth-fail", []field{
+// AuthFail emits the `auth-fail` event (WARN). method is "password" or "publickey";
+// reason is "bad-user", "bad-password", or "bad-key"; attempt is the per-IP
+// cumulative fail count after this failure; nextDelay is the sleep the next
+// attempt from this IP will incur. fingerprint is the SHA-256 fingerprint of
+// the presented key for publickey auth, or empty for password auth (omitted).
+func (l *Logger) AuthFail(remote, user, method, reason string, attempt int, nextDelay time.Duration, fingerprint string) {
+	fields := []field{
 		strField("remote", remote),
 		strField("user", user),
+		strField("method", method),
 		strField("reason", reason),
 		intField("attempt", attempt),
 		durField("next_delay", nextDelay),
-	})
+	}
+	if fingerprint != "" {
+		fields = append(fields, strField("fingerprint", fingerprint))
+	}
+	l.emit(levelWarn, "auth-fail", fields)
 }
 
 // Session emits the `session` event (INFO). kind is "shell", "exec" or "sftp".
@@ -283,4 +300,51 @@ func (l *Logger) Error(message, remote string) {
 		fields = append(fields, strField("remote", remote))
 	}
 	l.emit(levelError, "error", fields)
+}
+
+// PubkeyParseError emits the `pubkey-parse-error` event (WARN). path is the
+// authorized-keys file path; line is the 1-based line number; errMsg is the
+// error returned by ssh.ParseAuthorizedKey.
+func (l *Logger) PubkeyParseError(path string, line int, errMsg string) {
+	l.emit(levelWarn, "pubkey-parse-error", []field{
+		strField("path", path),
+		intField("line", line),
+		strField("error", errMsg),
+	})
+}
+
+// PubkeyOptionIgnored emits the `pubkey-option-ignored` event (WARN). path is
+// the file, line is the 1-based line number, option is the option string.
+func (l *Logger) PubkeyOptionIgnored(path string, line int, option string) {
+	l.emit(levelWarn, "pubkey-option-ignored", []field{
+		strField("path", path),
+		intField("line", line),
+		strField("option", option),
+	})
+}
+
+// PubkeyKeysMissing emits the `pubkey-keys-missing` event (WARN). path is the
+// authorized-keys file that was absent at startup.
+func (l *Logger) PubkeyKeysMissing(path string) {
+	l.emit(levelWarn, "pubkey-keys-missing", []field{
+		strField("path", path),
+	})
+}
+
+// PubkeyReloadOK emits the `pubkey-reload-ok` event (INFO). path is the file
+// path; pubkeyCount is the number of accepted keys after reload.
+func (l *Logger) PubkeyReloadOK(path string, pubkeyCount int) {
+	l.emit(levelInfo, "pubkey-reload-ok", []field{
+		strField("path", path),
+		intField("pubkey_count", pubkeyCount),
+	})
+}
+
+// PubkeyReloadFailed emits the `pubkey-reload-failed` event (WARN). path is
+// the file path; errMsg is the error or reason the reload was rejected.
+func (l *Logger) PubkeyReloadFailed(path string, errMsg string) {
+	l.emit(levelWarn, "pubkey-reload-failed", []field{
+		strField("path", path),
+		strField("error", errMsg),
+	})
 }

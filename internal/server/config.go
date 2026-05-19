@@ -46,20 +46,26 @@ const ServerVersion = "SSH-2.0-minisshd"
 
 // MaxAuthTries is the value set on ssh.ServerConfig.MaxAuthTries.
 //
-// Spec §4 mandates the behavioral guarantee: "3 real password attempts
-// per connection ... count password failures only." The spec also names
-// MaxAuthTries = 4 as the value to use, justified by the claim that
-// golang.org/x/crypto/ssh increments the counter on the mandatory `none`
-// probe. That claim is stale: the current library (v0.51.0) exempts the
-// first `none` from the counter (server.go: "Allow initial attempt of
-// 'none' without penalty."). With MaxAuthTries = 4 the server would
-// deliver four password failures, violating the behavioral guarantee.
+// The server allows up to 6 combined auth failures per connection before
+// disconnecting. A "failure" is any auth attempt the server rejects —
+// either a password attempt, a publickey signature failure, or a
+// rejected-key pubkey query (the probe where the client asks "would you
+// accept this key?" against an unknown key). Password failures, publickey
+// signature failures, and rejected-key queries all share a single combined
+// authFailures counter in golang.org/x/crypto/ssh. The current library
+// (v0.51.0, ssh/server.go lines 843–845) exempts only the mandatory initial
+// `none` probe from this counter; every other failure — including
+// rejected-key queries — increments authFailures.
 //
-// We therefore set MaxAuthTries = 3, which produces exactly three
-// password attempts under v0.51.0 — honoring the spec's load-bearing
-// rule ("count password failures only") over its now-stale literal
-// value. The §13.3 integration test asserts the count is exactly 3.
-const MaxAuthTries = 3
+// Why 6: A typical SSH client (OpenSSH, PuTTY) probes each key in its
+// agent with a query before presenting a signature. If the client holds 3
+// keys of which 2 are not in the authorized-keys file, the client generates
+// 2 rejected-key queries (+2) before signing with the accepted key. With
+// MaxAuthTries = 3, those probes consume two of the three slots. Setting
+// MaxAuthTries = 6 accommodates up to 3 rejected-key probes plus 3 real
+// credential attempts — the rate-limiter's per-IP backoff is the primary
+// brute-force defense.
+const MaxAuthTries = 6
 
 // Config bundles the wiring inputs the server needs. cmd/minisshd
 // constructs this with a bound listener, a loaded host key, the auth
@@ -84,4 +90,10 @@ type Config struct {
 	SessionService *session.Service
 	// Log is the structured logger.
 	Log *logging.Logger
+	// Methods is the list of SSH auth methods to advertise. Nil or empty
+	// defaults to ["password"] in newServerConfig.
+	Methods auth.Methods
+	// KeysetSource holds the atomic accepted-public-keys source. Nil when
+	// publickey auth is not configured.
+	KeysetSource *auth.KeysetSource
 }

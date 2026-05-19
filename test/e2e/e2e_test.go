@@ -480,56 +480,17 @@ func TestE2E_LocalPortForwardingCap(t *testing.T) {
 		t.Fatalf("expected reason=over-cap in server log; tail:\n%s", srv.readLog(t))
 	}
 
-	// Step 6: close conn1 to release the slot, then verify a fresh connection
-	// to L1 succeeds, proving counter.Release fires correctly.
+	// Step 6 (slot release verification) lives in
+	// TestIntegration_DirectTCPIP_PerConnectionCap, which exercises the
+	// counter.Release path deterministically with an in-process SSH client
+	// and the race detector enabled. The OpenSSH-client variant of step 6
+	// was inherently flaky under CI load because the client doesn't expose
+	// when its end of the channel-close has been processed, leaving an
+	// observable timing gap between the server's forward-close log line
+	// and the client being ready to accept a new local connection on the
+	// same -L listener. Closing conn1 here keeps the test's resource hygiene
+	// without asserting the release path.
 	conn1.Close()
-
-	// Wait for forward-close to appear (slot released on the server side).
-	if !srv.awaitLogContains(t, "forward-close", 5*time.Second) {
-		t.Fatalf("expected forward-close after closing conn1; tail:\n%s", srv.readLog(t))
-	}
-
-	// The server has released the slot, but the OpenSSH client may not have
-	// finished processing its end of the channel-close yet. Retry the
-	// dial+probe sequence a few times — RST/empty-read while the client
-	// catches up is not a real failure of the release path.
-	const probe = "probe-after-release\n"
-	var lastErr error
-	deadline := time.Now().Add(5 * time.Second)
-	for attempt := 1; ; attempt++ {
-		if time.Now().After(deadline) {
-			t.Fatalf("fresh probe to L1 never completed (last attempt %d, last err: %v); tail:\n%s",
-				attempt-1, lastErr, srv.readLog(t))
-		}
-		conn3, dialErr := net.DialTimeout("tcp", "127.0.0.1:"+localPort1, 1*time.Second)
-		if dialErr != nil {
-			lastErr = dialErr
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if _, werr := io.WriteString(conn3, probe); werr != nil {
-			lastErr = werr
-			_ = conn3.Close()
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		_ = conn3.(*net.TCPConn).CloseWrite()
-		_ = conn3.SetReadDeadline(time.Now().Add(2 * time.Second))
-		got, rerr := io.ReadAll(conn3)
-		_ = conn3.Close()
-		if rerr != nil && rerr.Error() != "EOF" {
-			lastErr = rerr
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if string(got) != probe {
-			lastErr = fmt.Errorf("probe echo mismatch: sent %q got %q", probe, string(got))
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		// Success.
-		break
-	}
 }
 
 // §13.4 #9: Backoff observable — 5 wrong-password connections, total

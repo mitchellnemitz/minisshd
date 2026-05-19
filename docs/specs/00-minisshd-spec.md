@@ -170,9 +170,9 @@ The publickey check uses the same hash-then-`subtle.ConstantTimeCompare`
 discipline so the timing envelope reveals only the **size** of the accepted
 keyset, not which key matched (or whether any matched):
 
-1. At startup (after §2 step 6, before accept), the authorized-keys file (§2 step 2c, see also §6.1) is parsed with `golang.org/x/crypto/ssh.ParseAuthorizedKey`. For each accepted key, the server computes the SHA-256 digest of `key.Marshal()` (the wire-format bytes) and caches the resulting 32-byte digest. Marshal-format is the same shape OpenSSH uses for fingerprinting; any two keys that compare equal under the SSH protocol have identical Marshal output. The cached digests are sorted lexicographically so reload-induced reordering does not change the iteration pattern.
+1. At startup (after §2 step 6, before accept), the authorized-keys file (§2 step 2c, see also §6) is parsed with `golang.org/x/crypto/ssh.ParseAuthorizedKey`. For each accepted key, the server computes the SHA-256 digest of `key.Marshal()` (the wire-format bytes) and caches the resulting 32-byte digest. Marshal-format is the same shape OpenSSH uses for fingerprinting; any two keys that compare equal under the SSH protocol have identical Marshal output. The cached digests are sorted lexicographically so reload-induced reordering does not change the iteration pattern.
 2. On every publickey callback, compute SHA-256 over the presented key's `Marshal()` bytes, then `subtle.ConstantTimeCompare` it against **every** cached digest. The iteration must not short-circuit on the first match — it walks the entire keyset on every call and ORs the results with `|` on the int returns. This leaks the cardinality of the keyset (each pubkey check takes ~N × 32-byte compare time) but not which key matched.
-3. The presented username is hashed and compared to the configured-username digest with `subtle.ConstantTimeCompare` in the **same** way as the password path. The username comparison and the key comparison both always run; the combined `ok` is the bitwise AND of the two int results.
+3. The presented username is hashed and compared to the configured-username digest with `subtle.ConstantTimeCompare` in the **same** way as the password path. Both `CheckUsername` and `Check` are called and their results captured in separate variables before any combination; the combining expression `ok := userOK && keyOK` lives in `internal/server/auth.go` and is safe to use `&&` only because both calls have already completed. The constant-time guarantee is enforced inside each called function (`credentials.go:checkUsernameWith` for the username comparison, `pubkey.go:Keyset.Check` for the key comparison); the outer `&&` does not break the timing envelope because both results are pre-materialized.
 4. Decide the result:
    - username matches AND any key digest matches → `(ok=true, reason="")`
    - username matches, no key matches → `(ok=false, reason="bad-key")`
@@ -368,7 +368,7 @@ A session channel may receive `pty-req`, `env`, `shell`, `exec`, and `subsystem`
    - `LANG`, `LC_*` from the server process if set.
    - The SSH client may send additional `env` requests; accept only `LANG` and `LC_*` (ignore the rest silently to avoid injection of `LD_*` etc.).
 5. Pipe channel ↔ PTY bidirectionally. The session ends on whichever happens first:
-   - **Child exits** (normal or signal): keep draining PTY output to the channel until the PTY master returns EOF (or `EIO` on platforms that surface it that way). Cap the drain at **2 seconds** as a backstop against a PTY that fails to close cleanly; anything past 2 s is dropped and a `drain-timeout` event (WARN, §9) is logged with the number of dropped bytes. Then send `exit-status`/`exit-signal` per step 6 and close the channel.
+   - **Child exits** (normal or signal): keep draining PTY output to the channel until the PTY master returns EOF (or `EIO` on platforms that surface it that way). Cap the drain at **2 seconds** as a backstop against a PTY that fails to close cleanly; anything past 2 s is dropped and a `drain-timeout` event (WARN, §9) is logged. The `bytes_dropped` field reflects unread bytes remaining in the channel buffer at the time the drain fires; the current implementation always reports `bytes_dropped=0` because exact counting would require wrapping the `io.Copy` path — this is a known limitation. Then send `exit-status`/`exit-signal` per step 6 and close the channel.
    - **Channel closes** (client disconnects, TCP drops, server sends EOF): send `SIGHUP` to the child's process group (see §8 Signal handling), wait up to 5 s for graceful exit, then `SIGKILL`. Do not send `exit-status` on the closed channel.
 6. On child exit, send the appropriate channel request, then close: if the child exited normally, send `exit-status` with the real exit code (0–255). If the child was killed by a signal, send `exit-signal` with the POSIX signal name (e.g. `HUP`, `TERM`, `KILL`), the core-dump flag, and an empty error message — do not send `exit-status` in that case. SSH clients render `exit-signal` distinctly from a status-zero exit.
 
@@ -382,7 +382,7 @@ A session channel may receive `pty-req`, `env`, `shell`, `exec`, and `subsystem`
    - Exec with PTY: stdio attached to the PTY slave; the channel data stream is piped to/from the PTY master. There is no separate `extended_data` stream when a PTY is in use (stderr is merged with stdout by the line discipline).
 3. Same environment rules as interactive shell, with one conditional: `TERM` is included if and only if a PTY was allocated (per the request-type combinations table, exec-with-pty does get `TERM`; bare exec does not).
 4. Channel/child lifecycle, mirroring §8.1 step 5:
-   - **Child exits**: drain remaining output to the channel until upstream returns EOF — for the PTY case until the PTY master returns EOF; for the bare-exec case until both stdout/stderr pipes return EOF. Cap the drain at **2 seconds** as a backstop; anything past 2 s is dropped and a `drain-timeout` event (WARN, §9) is logged. Then send `exit-status`/`exit-signal` per step 5 and close the channel.
+   - **Child exits**: drain remaining output to the channel until upstream returns EOF — for the PTY case until the PTY master returns EOF; for the bare-exec case until both stdout/stderr pipes return EOF. Cap the drain at **2 seconds** as a backstop; anything past 2 s is dropped and a `drain-timeout` event (WARN, §9) is logged. The `bytes_dropped` field is always `0` in the current implementation (same known limitation as §8.1 step 5). Then send `exit-status`/`exit-signal` per step 5 and close the channel.
    - **Channel closes before child exit**: send `SIGHUP` to the child's process group (see §8 Signal handling), wait up to 5 s for graceful exit, then `SIGKILL`. Do not send `exit-status` on the closed channel.
 5. On child exit, send `exit-status` or `exit-signal` per the same rules as the interactive shell (see §8 Interactive shell step 6).
 
@@ -439,9 +439,12 @@ exactly. Field types:
 - `event` — JSON string (e.g. `"listening"`, `"auth-fail"`). Always the
   third key in the JSON object.
 - `bind`, `fingerprint`, `user`, `remote`, `reason`, `kind`, `what`, `sig`,
-  `message` — JSON string. RFC 8259 escaping applies (`"` → `\"`,
-  `\` → `\\`, control characters → `\uXXXX`).
-- `port`, `pid`, `attempt`, `pgid`, `bytes_dropped` — JSON integer.
+  `message`, `auth_methods`, `method`, `dest_host`, `originator_host`, `path`,
+  `option`, `error` — JSON string. RFC 8259 escaping applies (`"` → `\"`,
+  `\` → `\\`, control characters → `\uXXXX`). Note: `auth_methods` is a
+  comma-separated list encoded as a single string (e.g. `"password,publickey"`).
+- `port`, `pid`, `attempt`, `pgid`, `bytes_dropped`, `bytes_in`, `bytes_out`,
+  `dest_port`, `originator_port`, `pubkey_count`, `line` — JSON integer.
 - `duration`, `next_delay` — JSON number, **seconds as a float** (e.g.
   `27.0`, `1.5`, `0.001`). This replaces the logfmt `time.Duration.String()`
   form because programmatic consumers benefit from a numeric type.
@@ -473,22 +476,22 @@ fields differ between formats: logfmt emits `time.Duration.String()` (e.g.
 the same numeric value.
 
 ```
-2026-05-17T14:22:01-07:00 INFO  listening bind=0.0.0.0 port=2222 fingerprint=SHA256:abc… user=alice pid=4711
+2026-05-17T14:22:01-07:00 INFO  listening bind=0.0.0.0 port=2222 fingerprint=SHA256:abc… user=alice pid=4711 auth_methods=password pubkey_count=0
 2026-05-17T14:22:18-07:00 INFO  conn-open  remote=192.168.1.42:51223
-2026-05-17T14:22:18-07:00 INFO  auth-ok    remote=192.168.1.42:51223 user=alice
+2026-05-17T14:22:18-07:00 INFO  auth-ok    remote=192.168.1.42:51223 user=alice method=password
 2026-05-17T14:22:18-07:00 INFO  session    remote=192.168.1.42:51223 kind=shell
 2026-05-17T14:22:45-07:00 INFO  shutdown-signal pgid=4733 sig=HUP reason=channel-close
 2026-05-17T14:22:45-07:00 INFO  conn-close remote=192.168.1.42:51223 duration=27s
-2026-05-17T14:23:02-07:00 WARN  auth-fail  remote=10.0.0.5:55001 user=bob reason=bad-user attempt=1 next_delay=1s
+2026-05-17T14:23:02-07:00 WARN  auth-fail  remote=10.0.0.5:55001 user=bob reason=bad-user attempt=1 next_delay=1s method=password
 ```
 
 When `--log-format json` is in effect, the same events render as:
 
 ```
-{"ts":"2026-05-17T14:22:01-07:00","level":"INFO","event":"listening","bind":"0.0.0.0","fingerprint":"SHA256:abc…","pid":4711,"port":2222,"user":"alice"}
+{"ts":"2026-05-17T14:22:01-07:00","level":"INFO","event":"listening","auth_methods":"password","bind":"0.0.0.0","fingerprint":"SHA256:abc…","pid":4711,"port":2222,"pubkey_count":0,"user":"alice"}
 {"ts":"2026-05-17T14:22:18-07:00","level":"INFO","event":"conn-open","remote":"192.168.1.42:51223"}
-{"ts":"2026-05-17T14:22:18-07:00","level":"INFO","event":"auth-ok","remote":"192.168.1.42:51223","user":"alice"}
-{"ts":"2026-05-17T14:23:02-07:00","level":"WARN","event":"auth-fail","attempt":1,"next_delay":1.0,"reason":"bad-user","remote":"10.0.0.5:55001","user":"bob"}
+{"ts":"2026-05-17T14:22:18-07:00","level":"INFO","event":"auth-ok","method":"password","remote":"192.168.1.42:51223","user":"alice"}
+{"ts":"2026-05-17T14:23:02-07:00","level":"WARN","event":"auth-fail","attempt":1,"method":"password","next_delay":1.0,"reason":"bad-user","remote":"10.0.0.5:55001","user":"bob"}
 ```
 
 The `Password: XXXXXX` banner described in §2 step 8 is **not** a structured
@@ -508,7 +511,7 @@ appears verbatim in both formats' invocations.
 | `session` | INFO | remote, kind (`shell` / `exec` / `sftp`) |
 | `reject` | WARN | remote, what (`x11`, `tcpip`, `agent`, `subsystem`, `streamlocal`, …). `tcpip` covers only reverse forwarding (`tcpip-forward` / `cancel-tcpip-forward` / `forwarded-tcpip`); local forwarding is logged via the `forward-*` events. |
 | `shutdown-signal` | INFO | pgid (process group ID receiving the signal), sig (POSIX signal name, e.g. `HUP` or `KILL`), reason (`shutdown` for server SIGINT/SIGTERM path, `channel-close` for client disconnect). Emitted every time the server sends a signal to a child process group. Lets tests verify signal delivery timing without racing the kernel. |
-| `drain-timeout` | WARN | remote, kind (`shell` / `exec`), bytes_dropped. Emitted when post-exit output drain exceeds the 2 s cap (§8.1 step 5 / §8.2 step 4). Indicates the PTY or pipes didn't close cleanly after child exit. |
+| `drain-timeout` | WARN | remote, kind (`shell` / `exec`), bytes_dropped. Emitted when post-exit output drain exceeds the 2 s cap (§8.1 step 5 / §8.2 step 4). Indicates the PTY or pipes didn't close cleanly after child exit. `bytes_dropped` reflects unread bytes remaining in the channel buffer at the time the drain fires; the current implementation always reports `0` because exact counting would require wrapping the `io.Copy` path. |
 | `forward-open`   | INFO | remote, dest_host, dest_port, originator_host, originator_port |
 | `forward-close`  | INFO | remote, dest_host, dest_port, bytes_in, bytes_out, duration |
 | `forward-reject` | WARN | remote, dest_host, dest_port, reason (`malformed-payload` / `dial-failed` / `over-cap`) |
@@ -771,7 +774,7 @@ The backoff integration test runs in real time and takes ~16 s, so it's tagged "
 make test         # unit + integration -short, fast (target <10 s)
 make test-slow    # unit + integration (full, includes the ~16 s backoff timing test)
 make e2e          # compiles binary, runs E2E with real ssh client (~45 s including #9 backoff test)
-make test-race    # unit + integration under -race
+make test-race    # unit + integration under -race (-short skips slow timing-dependent tests)
 make coverage     # all layers + merged coverage report, fails if <90%
 ```
 

@@ -35,13 +35,15 @@ import (
 // need to customize user/password/shell/bind. Zero values fall back to
 // sensible defaults so most call sites can `startTestServer(t)`.
 type testServerOptions struct {
-	user         string
-	password     string
-	shell        string
-	bind         string // empty -> 127.0.0.1
-	logFormat    logging.Format
-	authMethods  auth.Methods    // nil -> defaults to ["password"] in server
-	acceptedKeys []ssh.PublicKey // if non-nil, configure a KeysetSource
+	user              string
+	password          string
+	shell             string
+	bind              string // empty -> 127.0.0.1
+	logFormat         logging.Format
+	authMethods       auth.Methods    // nil -> defaults to ["password"] in server
+	acceptedKeys      []ssh.PublicKey // if non-nil, configure a KeysetSource
+	forwardMax        int             // effective cap; 0 = disable; ignored when disableForwarding=true
+	disableForwarding bool            // explicitly set ForwardMax=0 (overrides forwardMax)
 }
 
 // testServer is everything a §13.3 test needs to drive the in-process
@@ -130,6 +132,17 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		keysetSource = ks
 	}
 
+	// Compute the effective forward cap.  disableForwarding wins; if neither
+	// is set, use forwardMax (which defaults to 0, but that means "not set" in
+	// tests — use 32 as the default cap so tests that don't configure forwarding
+	// still exercise the real default).
+	effectiveCap := opts.forwardMax
+	if opts.disableForwarding {
+		effectiveCap = 0
+	} else if effectiveCap == 0 {
+		effectiveCap = 32 // match the production default
+	}
+
 	srv := server.New(server.Config{
 		Listener:       listener,
 		HostKey:        hostSigner,
@@ -139,6 +152,7 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		Log:            logger,
 		Methods:        opts.authMethods,
 		KeysetSource:   keysetSource,
+		ForwardMax:     effectiveCap,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())

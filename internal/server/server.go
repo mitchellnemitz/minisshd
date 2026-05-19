@@ -231,23 +231,37 @@ func (s *Server) handleConn(
 	connCtx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
 
-	// Channel accept loop. For each NewChannel: log+reject anything we
-	// don't support; accept and hand "session" off to the session
-	// service in a tracked goroutine.
+	// fwdCap tracks concurrent direct-tcpip channels on this connection.
+	// Named fwdCap (not forwardCounter) to avoid shadowing the type name.
+	fwdCap := &forwardCounter{cap: s.cfg.ForwardMax}
+
+	// Channel accept loop. Classify each inbound NewChannel and dispatch:
+	// sessions go to the session service; direct-tcpip channels go to the
+	// forward handler; everything else is already rejected inside
+	// classifyChannel.
 	for newCh := range chans {
-		if !routeChannel(newCh, remote, s.cfg.Log) {
-			continue
+		switch classifyChannel(newCh, remote, s.cfg.Log) {
+		case actionSession:
+			channel, reqs, err := newCh.Accept()
+			if err != nil {
+				s.cfg.Log.Error("accept channel: "+err.Error(), remote)
+				continue
+			}
+			sessionsWG.Add(1)
+			go func() {
+				defer sessionsWG.Done()
+				s.session.Handle(connCtx, channel, reqs, remote)
+			}()
+		case actionForward:
+			nc := newCh // capture for goroutine
+			sessionsWG.Add(1)
+			go func(nc ssh.NewChannel) {
+				defer sessionsWG.Done()
+				handleDirectTCPIP(connCtx, nc, remote, fwdCap, s.cfg.Log)
+			}(nc)
+		case actionRejected:
+			// already handled inside classifyChannel
 		}
-		channel, reqs, err := newCh.Accept()
-		if err != nil {
-			s.cfg.Log.Error("accept channel: "+err.Error(), remote)
-			continue
-		}
-		sessionsWG.Add(1)
-		go func() {
-			defer sessionsWG.Done()
-			s.session.Handle(connCtx, channel, reqs, remote)
-		}()
 	}
 }
 

@@ -60,6 +60,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logFormatFlag      = fs.String("log-format", "", "Structured-log format: logfmt (default) or json")
 		authFlag           = fs.String("auth", "", "Comma-separated SSH auth methods: password, publickey (overrides MINISSHD_AUTH)")
 		authorizedKeysFlag = fs.String("authorized-keys", "", "Path to authorized-keys file (overrides MINISSHD_AUTHORIZED_KEYS)")
+		forwardMaxFlag     = fs.Int("forward-max", -1, "Maximum concurrent direct-tcpip channels per SSH connection (0=disabled, default 32)")
 	)
 	if err := fs.Parse(args); err != nil {
 		// flag.ContinueOnError already printed the usage to stderr.
@@ -69,7 +70,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// Distinguish "flag explicitly set" from "default" so an explicit
 	// --pass="" can be rejected per spec §2 step 2. flag.Visit only
 	// iterates flags that the user supplied.
-	var passSet, userSet, hostKeySet, logFormatSet, authSet, authorizedKeysSet bool
+	var passSet, userSet, hostKeySet, logFormatSet, authSet, authorizedKeysSet, forwardMaxSet bool
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "pass":
@@ -84,12 +85,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			authSet = true
 		case "authorized-keys":
 			authorizedKeysSet = true
+		case "forward-max":
+			forwardMaxSet = true
 		}
 	})
 
 	// §2 step 1 — port range.
 	if *port < 0 || *port > 65535 {
 		fmt.Fprintf(stderr, "minisshd: --port %d out of range [0, 65535]\n", *port)
+		return exitBadConfig
+	}
+
+	// §2 step 10 — resolve --forward-max. Validation runs before the
+	// listener bind so a misconfiguration cannot produce a password banner.
+	forwardMax, fwdErr := resolveForwardMax(*forwardMaxFlag, forwardMaxSet, os.Getenv("MINISSHD_FORWARD_MAX"))
+	if fwdErr != nil {
+		fmt.Fprintf(stderr, "minisshd: %v\n", fwdErr)
 		return exitBadConfig
 	}
 
@@ -297,6 +308,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		Log:            logger,
 		Methods:        methods,
 		KeysetSource:   keysetSource,
+		ForwardMax:     forwardMax,
 	})
 	if err := srv.Serve(ctx); err != nil {
 		logger.Error(err.Error(), "")
@@ -355,6 +367,29 @@ func ensureMinisshdDir(path string) error {
 			path, info.Mode().Perm(), path)
 	}
 	return nil
+}
+
+// resolveForwardMax resolves the --forward-max value using the same
+// flag-beats-env precedence as other flags. flagValue is the parsed flag
+// value (-1 means "unset sentinel"). flagSet is true when the flag was
+// explicitly provided. envValue is the raw MINISSHD_FORWARD_MAX string.
+// Returns the resolved non-negative cap, or an error for invalid values.
+// Default when neither flag nor env is set is 32.
+func resolveForwardMax(flagValue int, flagSet bool, envValue string) (int, error) {
+	if flagSet {
+		if flagValue < 0 {
+			return 0, fmt.Errorf("--forward-max %d out of range: must be >= 0", flagValue)
+		}
+		return flagValue, nil
+	}
+	if envValue != "" {
+		n, err := strconv.Atoi(envValue)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("MINISSHD_FORWARD_MAX=%q is invalid: must be a non-negative integer", envValue)
+		}
+		return n, nil
+	}
+	return 32, nil // default
 }
 
 // listen binds a TCP listener at addr. For an IPv6 unspecified bind

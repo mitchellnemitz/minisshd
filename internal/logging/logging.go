@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -346,5 +347,39 @@ func (l *Logger) PubkeyReloadFailed(path string, errMsg string) {
 	l.emit(levelWarn, "pubkey-reload-failed", []field{
 		strField("path", path),
 		strField("error", errMsg),
+	})
+}
+
+// ForwardOpen emits the `forward-open` event (INFO) per spec §9.
+func (l *Logger) ForwardOpen(remote, destHost string, destPort int, origHost string, origPort int) {
+	l.emit(levelInfo, "forward-open", []field{
+		strField("remote", remote),
+		strField("dest_host", destHost),
+		{key: "dest_port", kind: fieldInt, num: int64(destPort), value: itoa(destPort)},
+		strField("originator_host", origHost),
+		{key: "originator_port", kind: fieldInt, num: int64(origPort), value: itoa(origPort)},
+	})
+}
+
+// ForwardClose emits the `forward-close` event (INFO) per spec §9.
+func (l *Logger) ForwardClose(remote, destHost string, destPort int, bytesIn, bytesOut int64, duration time.Duration) {
+	l.emit(levelInfo, "forward-close", []field{
+		strField("remote", remote),
+		strField("dest_host", destHost),
+		{key: "dest_port", kind: fieldInt, num: int64(destPort), value: itoa(destPort)},
+		{key: "bytes_in", kind: fieldInt, num: bytesIn, value: strconv.FormatInt(bytesIn, 10)},
+		{key: "bytes_out", kind: fieldInt, num: bytesOut, value: strconv.FormatInt(bytesOut, 10)},
+		durField("duration", duration),
+	})
+}
+
+// ForwardReject emits the `forward-reject` event (WARN) per spec §9.
+// reason is one of "malformed-payload", "dial-failed", "over-cap".
+func (l *Logger) ForwardReject(remote, destHost string, destPort int, reason string) {
+	l.emit(levelWarn, "forward-reject", []field{
+		strField("remote", remote),
+		strField("dest_host", destHost),
+		{key: "dest_port", kind: fieldInt, num: int64(destPort), value: itoa(destPort)},
+		strField("reason", reason),
 	})
 }

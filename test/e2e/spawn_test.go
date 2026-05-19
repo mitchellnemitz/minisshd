@@ -370,6 +370,21 @@ func awaitPort(addr string, timeout time.Duration) error {
 	return fmt.Errorf("timeout dialing %s", addr)
 }
 
+// nextFreePort grabs an ephemeral port, immediately releases it, and returns
+// the port number. The port is not guaranteed to stay free but is good enough
+// for test scenarios where the ssh client or the echo server will bind it right
+// away.
+func nextFreePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("nextFreePort: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close()
+	return port
+}
+
 // Force a small subset of stdlib symbols through indirection helpers so
 // the import list of this file stays narrow.
 var (

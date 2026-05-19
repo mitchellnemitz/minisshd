@@ -1,6 +1,7 @@
 # binaries
 /minisshd
 /minisshd-test
+/build/
 
 # Go build/test artifacts
 *.test
@@ -13,9 +14,6 @@
 # editor/IDE
 .idea/
 .vscode/
-
-# Claude Code (not project files)
-.claude/
 
 # macOS
 .DS_Store

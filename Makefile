@@ -6,7 +6,26 @@ GO ?= go
 # spawned-binary coverage data can attribute lines to it without warnings.
 COVERPKG := ./cmd/...,./internal/...
 
-.PHONY: test test-slow e2e test-race coverage clean-coverage
+# Install destination for `make install`. Override on the command line, e.g.
+# `make install MINISSHD_INSTALL_DIR=/usr/local/bin`.
+MINISSHD_INSTALL_DIR ?= $(HOME)/.local/bin
+
+.PHONY: build install test test-slow e2e test-race coverage clean-coverage
+
+# Build a single-platform binary at build/minisshd using the same flags as the
+# release workflow (.github/workflows/release.yml): CGO disabled, -trimpath,
+# and -s -w to strip the symbol/DWARF tables.
+build:
+	@mkdir -p build
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags '-s -w' -o build/minisshd ./cmd/minisshd
+
+# Install the locally-built binary into MINISSHD_INSTALL_DIR (default
+# ~/.local/bin). Uses `install` so the binary lands with mode 0755 on both
+# macOS and Linux.
+install: build
+	@mkdir -p $(MINISSHD_INSTALL_DIR)
+	install -m 0755 build/minisshd $(MINISSHD_INSTALL_DIR)/minisshd
+	@echo "installed: $(MINISSHD_INSTALL_DIR)/minisshd"
 
 # §13.6: fast target, < 10 s. Skips the ~16 s ratelimit backoff timing test
 # via testing.Short().

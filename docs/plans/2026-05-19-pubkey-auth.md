@@ -51,7 +51,7 @@ spec text outside these blocks is unchanged.
 
 ### 2.1 §4 — Authentication (whole-section rewrite)
 
-Current §4 reads (verbatim, lines 72-99 of `docs/specs/00-minisshd-spec.md`):
+Current §4 reads (verbatim, lines 72-99 of `SPEC.md`):
 
 > ## 4. Authentication
 >
@@ -1167,7 +1167,7 @@ The implementation pass is complete when **all** of the following hold:
 8. `make coverage` — merged coverage ≥ 90.0 % (the existing threshold;
    not raised in this change).
 9. The spec amendments listed in §2 of this plan are applied to
-   `docs/specs/00-minisshd-spec.md` verbatim. No code change lands without
+   `SPEC.md` verbatim. No code change lands without
    the corresponding spec change in the same commit (per the
    project-defining "spec is the contract" rule in `CLAUDE.md`).
 10. The §9 password-scrub invariant is preserved: a unit test in
@@ -1345,7 +1345,7 @@ The check is now simply: `methods == {publickey}` AND zero keys loaded → exit 
 **Resolution: Agreed and addressed.** The doc comment has been rewritten to: "CheckUsername returns (ok, reason) for the publickey path. Only the username comparison runs; the caller is responsible for combining this result with the keyset check. Reason is '' on match, ReasonBadUser otherwise."
 
 ### M6 — §12 amendment: other "key-based auth" references
-**Resolution: Disagree that action is required.** A search of `docs/specs/00-minisshd-spec.md` finds only one occurrence of "key-based auth" — the §12 non-goals bullet that this plan replaces. The §4 method description ("Only the SSH `password` authentication method is offered. `publickey`, …") is replaced wholesale by the §4 rewrite in §2.1. Line 466 (E2E test case 7, "Pubkey-only fails") correctly describes a test where the server runs in `--auth=password` mode and a publickey-only client fails — this remains valid after the change and does not need updating. No other section requires amendment.
+**Resolution: Disagree that action is required.** A search of `SPEC.md` finds only one occurrence of "key-based auth" — the §12 non-goals bullet that this plan replaces. The §4 method description ("Only the SSH `password` authentication method is offered. `publickey`, …") is replaced wholesale by the §4 rewrite in §2.1. Line 466 (E2E test case 7, "Pubkey-only fails") correctly describes a test where the server runs in `--auth=password` mode and a publickey-only client fails — this remains valid after the change and does not need updating. No other section requires amendment.
 
 ### M7 — matched == 1 comment should say "non-zero"
 **Resolution: Agreed and addressed.** The `Keyset.Check` description now uses `matched != 0` with a comment explaining why `!= 0` is preferred over `== 1` (OR-accumulation can produce non-1 non-zero values if the implementation changes).

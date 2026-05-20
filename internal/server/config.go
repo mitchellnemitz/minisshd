@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 
@@ -101,4 +102,13 @@ type Config struct {
 	// cmd/minisshd (§2 step 10); the server treats whatever value is handed
 	// to it as truth.
 	ForwardMax int
+	// Sleep replaces time.Sleep inside the auth callbacks' rate-limit wait.
+	// Nil falls back to time.Sleep (production). Integration tests inject a
+	// no-op so the spec §5 backoff schedule does not burn wall-clock seconds
+	// during scenarios that only care about attempt counts and log events.
+	Sleep func(time.Duration)
+	// DrainTimeout overrides the cap Serve waits for in-flight sessions
+	// after shutdown. Zero falls back to the §8 production default (5s).
+	// Tests that just need a clean teardown set this small.
+	DrainTimeout time.Duration
 }

@@ -18,6 +18,7 @@ func keyPath(t *testing.T) string {
 }
 
 func TestLoadOrGenerate_MissingKeyGenerated(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 
 	signer, fp, err := LoadOrGenerate(path)
@@ -61,6 +62,7 @@ func TestLoadOrGenerate_MissingKeyGenerated(t *testing.T) {
 }
 
 func TestLoadOrGenerate_ExistingKeyLoadedUnchanged(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 	// Generate once.
 	if _, _, err := LoadOrGenerate(path); err != nil {
@@ -85,6 +87,7 @@ func TestLoadOrGenerate_ExistingKeyLoadedUnchanged(t *testing.T) {
 }
 
 func TestLoadOrGenerate_TooOpenMode(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 	if _, _, err := LoadOrGenerate(path); err != nil {
 		t.Fatalf("initial generate: %v", err)
@@ -99,6 +102,7 @@ func TestLoadOrGenerate_TooOpenMode(t *testing.T) {
 }
 
 func TestLoadOrGenerate_CorruptKey(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 	junk := make([]byte, 5)
 	if _, err := rand.Read(junk); err != nil {
@@ -128,6 +132,7 @@ func TestLoadOrGenerate_CorruptKey(t *testing.T) {
 }
 
 func TestLoadOrGenerate_MissingParent(t *testing.T) {
+	t.Parallel()
 	parent := filepath.Join(t.TempDir(), "does-not-exist")
 	path := filepath.Join(parent, "host_key")
 
@@ -141,6 +146,7 @@ func TestLoadOrGenerate_MissingParent(t *testing.T) {
 }
 
 func TestLoadOrGenerate_RoundTrip(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 
 	signer1, fp1, err := LoadOrGenerate(path)
@@ -175,6 +181,7 @@ func TestLoadOrGenerate_RoundTrip(t *testing.T) {
 }
 
 func TestLoadOrGenerate_MissingPubRegenerated(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 	signer, _, err := LoadOrGenerate(path)
 	if err != nil {
@@ -208,6 +215,7 @@ func TestLoadOrGenerate_MissingPubRegenerated(t *testing.T) {
 }
 
 func TestLoadOrGenerate_StalePubOverwritten(t *testing.T) {
+	t.Parallel()
 	path := keyPath(t)
 	signer, _, err := LoadOrGenerate(path)
 	if err != nil {

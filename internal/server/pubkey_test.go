@@ -64,6 +64,7 @@ func (nopPubkeyLoggerForServer) PubkeyReloadFailed(_ string, _ string)         {
 // version: the spec §5 lifecycle must be Acquire → sleep → CheckUsername+Check
 // → release(true) → AuthOK.
 func TestPublickeyCallback_SuccessLogsAuthOK_ReleasesTrue(t *testing.T) {
+	t.Parallel()
 	signer := generatePubkeyTestKey(t)
 	pub := signer.PublicKey()
 
@@ -101,6 +102,7 @@ func TestPublickeyCallback_SuccessLogsAuthOK_ReleasesTrue(t *testing.T) {
 // username matches but the key is not in the keyset, the callback returns
 // release(false) and logs AuthFail with reason=bad-key and the presented fingerprint.
 func TestPublickeyCallback_BadKeyReleasesFalseLogsBadKey(t *testing.T) {
+	t.Parallel()
 	// Accepted key is key1; presented key is key2 (wrong).
 	signer1 := generatePubkeyTestKey(t)
 	signer2 := generatePubkeyTestKey(t)
@@ -141,6 +143,7 @@ func TestPublickeyCallback_BadKeyReleasesFalseLogsBadKey(t *testing.T) {
 // TestPublickeyCallback_BadUserReleasesFalseLogsBadUser verifies that when the
 // username does not match, bad-user wins over bad-key in the reason field.
 func TestPublickeyCallback_BadUserReleasesFalseLogsBadUser(t *testing.T) {
+	t.Parallel()
 	signer := generatePubkeyTestKey(t)
 	pub := signer.PublicKey()
 
@@ -169,6 +172,7 @@ func TestPublickeyCallback_BadUserReleasesFalseLogsBadUser(t *testing.T) {
 // TestPublickeyCallback_SleepHappensBeforeCheck verifies spec §5 ordering:
 // Acquire → sleep(delay) → CheckUsername+Check → release.
 func TestPublickeyCallback_SleepHappensBeforeCheck(t *testing.T) {
+	t.Parallel()
 	signer := generatePubkeyTestKey(t)
 	pub := signer.PublicKey()
 
@@ -199,6 +203,7 @@ func TestPublickeyCallback_SleepHappensBeforeCheck(t *testing.T) {
 // arriving on a dual-stack listener (::ffff:127.0.0.1) is normalized to the
 // bare IPv4 key when looking up the limiter snapshot.
 func TestPublickeyCallback_IPv4MappedV6Normalization(t *testing.T) {
+	t.Parallel()
 	signer := generatePubkeyTestKey(t)
 	pub := signer.PublicKey()
 
@@ -223,6 +228,7 @@ func TestPublickeyCallback_IPv4MappedV6Normalization(t *testing.T) {
 // TestPublickeyCallback_LoggerDoesNotLeakPassword verifies that even for
 // publickey flows, the configured password never appears in log output.
 func TestPublickeyCallback_LoggerDoesNotLeakPassword(t *testing.T) {
+	t.Parallel()
 	signer := generatePubkeyTestKey(t)
 	pub := signer.PublicKey()
 
@@ -251,6 +257,7 @@ func TestPublickeyCallback_LoggerDoesNotLeakPassword(t *testing.T) {
 // across the probe-A → probe-B-evicts-A → sign-A sequence the total Acquire
 // count is 3 (once per callback invocation, since Acquire runs unconditionally).
 func TestPublickeyCallback_CacheEvictionCausesDoubleAcquire(t *testing.T) {
+	t.Parallel()
 	signerA := generatePubkeyTestKey(t)
 	signerB := generatePubkeyTestKey(t)
 	pubA := signerA.PublicKey()
@@ -291,6 +298,7 @@ func TestPublickeyCallback_CacheEvictionCausesDoubleAcquire(t *testing.T) {
 // TestPublickeyCallback_QueryAndSignBothAcquire documents that both a
 // rejected-key probe and a real sign attempt each call Acquire once.
 func TestPublickeyCallback_QueryAndSignBothAcquire(t *testing.T) {
+	t.Parallel()
 	// Rejected key: key is NOT in the keyset.
 	signerA := generatePubkeyTestKey(t)
 	pubA := signerA.PublicKey()

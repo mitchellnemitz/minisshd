@@ -64,6 +64,7 @@ func (r *recordingRejectLogger) Reject(remote, what string) {
 }
 
 func TestRouteChannel_SessionAccepted(t *testing.T) {
+	t.Parallel()
 	ch := &fakeNewChannel{chanType: "session"}
 	log := &recordingRejectLogger{}
 
@@ -81,6 +82,7 @@ func TestRouteChannel_SessionAccepted(t *testing.T) {
 // TestRouteChannel_RejectsForwardedTCPIP asserts that forwarded-tcpip is
 // rejected. direct-tcpip is no longer rejected (it routes to actionForward).
 func TestRouteChannel_RejectsForwardedTCPIP(t *testing.T) {
+	t.Parallel()
 	for _, ct := range []string{"forwarded-tcpip"} {
 		t.Run(ct, func(t *testing.T) {
 			ch := &fakeNewChannel{chanType: ct}
@@ -104,6 +106,7 @@ func TestRouteChannel_RejectsForwardedTCPIP(t *testing.T) {
 // TestClassifyChannel_DirectTCPIPRoutedToForward asserts that classifyChannel
 // returns actionForward for direct-tcpip and does NOT call Reject or log.Reject.
 func TestClassifyChannel_DirectTCPIPRoutedToForward(t *testing.T) {
+	t.Parallel()
 	ch := &fakeNewChannel{chanType: "direct-tcpip"}
 	log := &recordingRejectLogger{}
 	action := classifyChannel(ch, "1.2.3.4:5", log)
@@ -121,6 +124,7 @@ func TestClassifyChannel_DirectTCPIPRoutedToForward(t *testing.T) {
 // TestClassifyChannel_SessionRoutedToSession asserts that classifyChannel
 // returns actionSession for "session" and does not reject the channel.
 func TestClassifyChannel_SessionRoutedToSession(t *testing.T) {
+	t.Parallel()
 	ch := &fakeNewChannel{chanType: "session"}
 	log := &recordingRejectLogger{}
 	action := classifyChannel(ch, "1.2.3.4:5", log)
@@ -136,6 +140,7 @@ func TestClassifyChannel_SessionRoutedToSession(t *testing.T) {
 }
 
 func TestRouteChannel_RejectsStreamlocal(t *testing.T) {
+	t.Parallel()
 	for _, ct := range []string{
 		"direct-streamlocal@openssh.com",
 		"streamlocal-forward@openssh.com",
@@ -157,6 +162,7 @@ func TestRouteChannel_RejectsStreamlocal(t *testing.T) {
 }
 
 func TestRouteChannel_RejectsUnknownType(t *testing.T) {
+	t.Parallel()
 	ch := &fakeNewChannel{chanType: "random-thing"}
 	log := &recordingRejectLogger{}
 	if routeChannel(ch, "remote", log) {
@@ -174,6 +180,7 @@ func TestRouteChannel_RejectsUnknownType(t *testing.T) {
 }
 
 func TestHandleGlobalRequest_RejectsTCPIPForward(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"tcpip-forward", "cancel-tcpip-forward"} {
 		t.Run(name, func(t *testing.T) {
 			req := &fakeRequest{t: name, wantReply: true}
@@ -190,6 +197,7 @@ func TestHandleGlobalRequest_RejectsTCPIPForward(t *testing.T) {
 }
 
 func TestHandleGlobalRequest_SilentlyDeniesUnknown(t *testing.T) {
+	t.Parallel()
 	// Keepalives and other unknown global requests should be denied
 	// without a reject-log entry — spec §9 only flags the documented
 	// forwarding requests.
@@ -205,6 +213,7 @@ func TestHandleGlobalRequest_SilentlyDeniesUnknown(t *testing.T) {
 }
 
 func TestSSHRequestAdapter_PassesThroughFields(t *testing.T) {
+	t.Parallel()
 	// Adapter mostly delegates, but the test pins the surface so a
 	// future rename catches at compile/test time.
 	a := sshRequestAdapter{r: &ssh.Request{Type: "tcpip-forward", WantReply: false}}

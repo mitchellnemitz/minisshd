@@ -73,6 +73,7 @@ func marshalledAuthorizedKey(pub ssh.PublicKey) string {
 // TestKeyset_Check_MatchingKeyAcceptsAndReturnsFingerprint verifies that a
 // single accepted key matches itself and returns the correct fingerprint.
 func TestKeyset_Check_MatchingKeyAcceptsAndReturnsFingerprint(t *testing.T) {
+	t.Parallel()
 	_, pub := generateTestKey(t)
 	raw := pub.Marshal()
 	digest := sha256.Sum256(raw)
@@ -98,6 +99,7 @@ func TestKeyset_Check_MatchingKeyAcceptsAndReturnsFingerprint(t *testing.T) {
 // TestKeyset_Check_WrongKeyReturnsBadKey verifies that a presented key that
 // is not in the keyset returns (false, "bad-key", fingerprint).
 func TestKeyset_Check_WrongKeyReturnsBadKey(t *testing.T) {
+	t.Parallel()
 	_, acceptedPub := generateTestKey(t)
 	_, wrongPub := generateTestKey(t)
 
@@ -126,6 +128,7 @@ func TestKeyset_Check_WrongKeyReturnsBadKey(t *testing.T) {
 // TestKeyset_Check_EmptyKeysetReturnsBadKey verifies that an empty keyset
 // returns (false, "bad-key", fingerprint) and never incorrectly authenticates.
 func TestKeyset_Check_EmptyKeysetReturnsBadKey(t *testing.T) {
+	t.Parallel()
 	_, pub := generateTestKey(t)
 	ks := &Keyset{} // zero keys
 
@@ -145,6 +148,7 @@ func TestKeyset_Check_EmptyKeysetReturnsBadKey(t *testing.T) {
 // every accepted key regardless of whether a match was found. A counting
 // wrapper replaces subtle.ConstantTimeCompare.
 func TestKeyset_Check_NoShortCircuit(t *testing.T) {
+	t.Parallel()
 	const n = 5
 	// Build 5 accepted keys.
 	var pubKeys []ssh.PublicKey
@@ -190,6 +194,7 @@ func TestKeyset_Check_NoShortCircuit(t *testing.T) {
 // TestKeyset_check_countCompares injects a counting wrapper via the internal
 // field to prove all keys are iterated on every call (no early exit).
 func TestKeyset_check_countCompares(t *testing.T) {
+	t.Parallel()
 	const n = 5
 	var pubKeys []ssh.PublicKey
 	var accepted []AcceptedKey
@@ -236,8 +241,14 @@ func TestKeyset_check_countCompares(t *testing.T) {
 // times and the minimum kept, which filters single-sample outliers.
 // Skipped under -short.
 func TestKeyset_Check_TimingEnvelope(t *testing.T) {
+	// Intentionally NOT t.Parallel(): this test measures wall-clock duration
+	// of pubkey-compare paths and would flake under CPU contention from
+	// concurrently running sibling tests.
 	if testing.Short() {
 		t.Skip("timing assertion; skipped under -short")
+	}
+	if testing.CoverMode() != "" {
+		t.Skip("coverage instrumentation distorts per-statement timing; threshold not meaningful under -cover")
 	}
 
 	const n = 5
@@ -308,6 +319,7 @@ func TestKeyset_Check_TimingEnvelope(t *testing.T) {
 // TestKeyset_Check_FingerprintMatchesSSHKeygenFormat verifies that the
 // fingerprint returned by Check matches ssh.FingerprintSHA256 directly.
 func TestKeyset_Check_FingerprintMatchesSSHKeygenFormat(t *testing.T) {
+	t.Parallel()
 	_, pub := generateTestKey(t)
 	raw := pub.Marshal()
 	digest := sha256.Sum256(raw)
@@ -330,6 +342,7 @@ func TestKeyset_Check_FingerprintMatchesSSHKeygenFormat(t *testing.T) {
 // TestParseAuthorizedKeys_GoodFile verifies that a file with two ed25519 keys,
 // one comment line, and one blank line produces exactly 2 accepted keys.
 func TestParseAuthorizedKeys_GoodFile(t *testing.T) {
+	t.Parallel()
 	_, pub1 := generateTestKey(t)
 	_, pub2 := generateTestKey(t)
 
@@ -359,6 +372,7 @@ func TestParseAuthorizedKeys_GoodFile(t *testing.T) {
 // TestParseAuthorizedKeys_OptionsAreIgnored verifies that a key line with
 // options (e.g. "command=...") is accepted with a PubkeyOptionIgnored event.
 func TestParseAuthorizedKeys_OptionsAreIgnored(t *testing.T) {
+	t.Parallel()
 	_, pub := generateTestKey(t)
 	// Build a line with a command option prefix.
 	plainLine := string(bytes.TrimRight(ssh.MarshalAuthorizedKey(pub), "\n"))
@@ -387,6 +401,7 @@ func TestParseAuthorizedKeys_OptionsAreIgnored(t *testing.T) {
 // skipped (with a PubkeyParseError event) and valid lines in the same file are
 // still accepted.
 func TestParseAuthorizedKeys_MalformedLineIsSkipped(t *testing.T) {
+	t.Parallel()
 	_, pub := generateTestKey(t)
 	content := "not-a-key\n" + marshalledAuthorizedKey(pub)
 
@@ -411,6 +426,7 @@ func TestParseAuthorizedKeys_MalformedLineIsSkipped(t *testing.T) {
 // TestParseAuthorizedKeys_EmptyFile verifies that an empty file produces an
 // empty keyset and no events.
 func TestParseAuthorizedKeys_EmptyFile(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "authorized_keys")
 	if err := os.WriteFile(path, []byte{}, 0600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -433,6 +449,7 @@ func TestParseAuthorizedKeys_EmptyFile(t *testing.T) {
 // TestKeysetSource_Load_MissingFile verifies that os.ErrNotExist produces an
 // empty keyset and a PubkeyKeysMissing event (not an error return).
 func TestKeysetSource_Load_MissingFile(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "no_such_file")
 	log := &recordingPubkeyLogger{}
 	ks := NewKeysetSource(path, log)
@@ -450,6 +467,7 @@ func TestKeysetSource_Load_MissingFile(t *testing.T) {
 // TestKeysetSource_Load_UnreadableFile verifies that a permission-denied open
 // error is returned to the caller (not treated as missing).
 func TestKeysetSource_Load_UnreadableFile(t *testing.T) {
+	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("root can read any file; skip permission test")
 	}
@@ -469,6 +487,7 @@ func TestKeysetSource_Load_UnreadableFile(t *testing.T) {
 // Current().Check() while a single goroutine calls Reload() repeatedly.
 // The race detector must pass cleanly.
 func TestKeysetSource_Reload_AtomicSwap(t *testing.T) {
+	t.Parallel()
 	_, pub1 := generateTestKey(t)
 	_, pub2 := generateTestKey(t)
 
@@ -522,6 +541,7 @@ func TestKeysetSource_Reload_AtomicSwap(t *testing.T) {
 // successful load, a Reload with a malformed file preserves the previous
 // keyset and emits PubkeyReloadFailed.
 func TestKeysetSource_Reload_PreservesPreviousOnFailure(t *testing.T) {
+	t.Parallel()
 	_, pub := generateTestKey(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "authorized_keys")

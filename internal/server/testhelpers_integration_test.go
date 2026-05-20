@@ -44,6 +44,13 @@ type testServerOptions struct {
 	acceptedKeys      []ssh.PublicKey // if non-nil, configure a KeysetSource
 	forwardMax        int             // effective cap; 0 = disable; ignored when disableForwarding=true
 	disableForwarding bool            // explicitly set ForwardMax=0 (overrides forwardMax)
+	// realRateLimitSleep, when true, wires the production time.Sleep into
+	// the auth callbacks so the spec §5 backoff schedule actually burns
+	// wall-clock seconds. The default (false) installs a no-op sleeper so
+	// integration tests that only check attempt counts and log events do
+	// not pay the 1+2+4+8+16s cumulative cost. The dedicated rate-limit
+	// timing test in internal/ratelimit covers the real-time path.
+	realRateLimitSleep bool
 }
 
 // testServer is everything a §13.3 test needs to drive the in-process
@@ -143,6 +150,11 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		effectiveCap = 32 // match the production default
 	}
 
+	var sleep func(time.Duration)
+	if !opts.realRateLimitSleep {
+		sleep = func(time.Duration) {}
+	}
+
 	srv := server.New(server.Config{
 		Listener:       listener,
 		HostKey:        hostSigner,
@@ -153,6 +165,8 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		Methods:        opts.authMethods,
 		KeysetSource:   keysetSource,
 		ForwardMax:     effectiveCap,
+		Sleep:          sleep,
+		DrainTimeout:   100 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())

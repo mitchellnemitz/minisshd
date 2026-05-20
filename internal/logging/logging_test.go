@@ -45,6 +45,7 @@ func lastLine(t *testing.T, buf *bytes.Buffer) string {
 // TestEvelopes asserts every event method produces a line that matches the
 // spec §13.2 regex and contains the documented field names.
 func TestEnvelopes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name     string
 		fields   []string // required field names (must appear as `name=`)
@@ -170,6 +171,7 @@ func TestEnvelopes(t *testing.T) {
 // TestEnvelopes_JSON is the JSON twin of TestEnvelopes. For each event it
 // asserts the emitted line parses as JSON with the expected fields and types.
 func TestEnvelopes_JSON(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		wantEvent   string
@@ -325,6 +327,7 @@ func TestEnvelopes_JSON(t *testing.T) {
 // TestErrorOmitsEmptyRemote asserts that the `remote` field is dropped
 // entirely when Error is called with an empty remote.
 func TestErrorOmitsEmptyRemote(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLogger("")
 	l.Error("disk full", "")
 	out := buf.String()
@@ -338,6 +341,7 @@ func TestErrorOmitsEmptyRemote(t *testing.T) {
 
 // TestQuotingRules covers the §9 value-quoting rules.
 func TestQuotingRules(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		value     string
@@ -370,6 +374,7 @@ func TestQuotingRules(t *testing.T) {
 // TestIPLiteralsUnquoted asserts IPv4 and IPv6 literals appear unquoted —
 // none of their characters trigger §9 quoting.
 func TestIPLiteralsUnquoted(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		"192.168.1.42:51223",
 		"[2001:db8::1]:51223",
@@ -398,6 +403,7 @@ func TestIPLiteralsUnquoted(t *testing.T) {
 // every string field across every event and asserts the literal password
 // never appears in the captured output.
 func TestPasswordScrubGuard(t *testing.T) {
+	t.Parallel()
 	const pw = "hunter2"
 	l, buf := newTestLogger(pw)
 
@@ -426,6 +432,7 @@ func TestPasswordScrubGuard(t *testing.T) {
 // configured password — when the configured password is "", values equal to
 // "hunter2" must pass through verbatim.
 func TestPasswordScrubDisabledWhenEmpty(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLogger("")
 	l.AuthOK("1.2.3.4:5", "hunter2", "password", "")
 	out := buf.String()
@@ -441,6 +448,7 @@ func TestPasswordScrubDisabledWhenEmpty(t *testing.T) {
 // test asserts every line is well-formed (no interleaving) and matches the
 // envelope regex. Combined with `go test -race`, this exercises the mutex.
 func TestConcurrentEmission(t *testing.T) {
+	t.Parallel()
 	const goroutines = 50
 	const perGoroutine = 20
 
@@ -478,6 +486,7 @@ func TestConcurrentEmission(t *testing.T) {
 // TestEnvelopeShape locks down the exact opening of the emitted line so that
 // downstream regex-based assertions in integration tests remain stable.
 func TestEnvelopeShape(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLogger("")
 	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 	line := lastLine(t, buf)
@@ -492,6 +501,7 @@ func TestEnvelopeShape(t *testing.T) {
 // TestJSONEnvelope_FieldOrder asserts that the JSON output begins with
 // {"ts":... and that ts, level, event come first in that order.
 func TestJSONEnvelope_FieldOrder(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 	line := lastLine(t, buf)
@@ -522,6 +532,7 @@ func TestJSONEnvelope_FieldOrder(t *testing.T) {
 // TestJSONEnvelope_TrailingNewline asserts every emitted JSON line ends with
 // exactly one newline.
 func TestJSONEnvelope_TrailingNewline(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.ConnOpen("1.2.3.4:5")
 	l.AuthOK("1.2.3.4:5", "alice", "password", "")
@@ -542,6 +553,7 @@ func TestJSONEnvelope_TrailingNewline(t *testing.T) {
 
 // TestJSON_ErrorOmitsEmptyRemote mirrors TestErrorOmitsEmptyRemote for JSON.
 func TestJSON_ErrorOmitsEmptyRemote(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.Error("disk full", "")
 	line := lastLine(t, buf)
@@ -560,6 +572,7 @@ func TestJSON_ErrorOmitsEmptyRemote(t *testing.T) {
 // TestJSON_StringEscape verifies that special characters in string fields
 // round-trip correctly through JSON encoding.
 func TestJSON_StringEscape(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.AuthOK("1.2.3.4:5", `user"with quote`, "password", "")
 	line := lastLine(t, buf)
@@ -575,6 +588,7 @@ func TestJSON_StringEscape(t *testing.T) {
 // TestJSON_DurationAsFloatSeconds asserts that duration fields are emitted
 // as float seconds, not as a time.Duration.String() form.
 func TestJSON_DurationAsFloatSeconds(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.ConnClose("1.2.3.4:5", 1500*time.Millisecond)
 	line := lastLine(t, buf)
@@ -594,6 +608,7 @@ func TestJSON_DurationAsFloatSeconds(t *testing.T) {
 // TestJSON_DurationWholeSecondsHasDecimal asserts that whole-second durations
 // are emitted with a ".0" suffix for visual distinction from integer counters.
 func TestJSON_DurationWholeSecondsHasDecimal(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.ConnClose("1.2.3.4:5", 1*time.Second)
 	line := lastLine(t, buf)
@@ -605,6 +620,7 @@ func TestJSON_DurationWholeSecondsHasDecimal(t *testing.T) {
 // TestJSON_LineIsValidJSON exhaustively calls every event method and asserts
 // each emitted line is valid JSON.
 func TestJSON_LineIsValidJSON(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLoggerFmt("", FormatJSON)
 	l.Listening("0.0.0.0", 2222, "SHA256:abc", "alice", 4711, "password", 0)
 	l.ConnOpen("1.2.3.4:5")
@@ -633,6 +649,7 @@ func TestJSON_LineIsValidJSON(t *testing.T) {
 // TestJSON_ScrubWithQuoteInPassword is the load-bearing test: a password
 // containing a double-quote must not leak in its raw or JSON-escaped form.
 func TestJSON_ScrubWithQuoteInPassword(t *testing.T) {
+	t.Parallel()
 	const pw = "\"hello\"world" // contains literal double-quotes
 	l, buf := newTestLoggerFmt(pw, FormatJSON)
 
@@ -676,6 +693,7 @@ func TestJSON_ScrubWithQuoteInPassword(t *testing.T) {
 // TestJSON_ScrubWithBackslashInPassword tests that passwords containing a
 // backslash are scrubbed in both raw and encoded form.
 func TestJSON_ScrubWithBackslashInPassword(t *testing.T) {
+	t.Parallel()
 	const pw = `back\slash`
 	l, buf := newTestLoggerFmt(pw, FormatJSON)
 
@@ -706,6 +724,7 @@ func TestJSON_ScrubWithBackslashInPassword(t *testing.T) {
 // TestJSON_ScrubWithControlCharInPassword tests passwords containing a
 // literal newline byte.
 func TestJSON_ScrubWithControlCharInPassword(t *testing.T) {
+	t.Parallel()
 	pw := "hi\nbye"
 	l, buf := newTestLoggerFmt(pw, FormatJSON)
 
@@ -730,6 +749,7 @@ func TestJSON_ScrubWithControlCharInPassword(t *testing.T) {
 // TestLogger_PubkeyEvents_AllFiveEmit calls all five Pubkey* methods and
 // verifies each emits exactly one line containing the expected event name.
 func TestLogger_PubkeyEvents_AllFiveEmit(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		wantEvent string
@@ -781,6 +801,7 @@ func TestLogger_PubkeyEvents_AllFiveEmit(t *testing.T) {
 // bytes appear inside an argument to each of the five Pubkey* methods and
 // asserts that the scrub redacts the password in every emitted line.
 func TestLogger_PubkeyEvents_PasswordScrubStillApplies(t *testing.T) {
+	t.Parallel()
 	const pw = "hunter2"
 	l, buf := newTestLogger(pw)
 
@@ -804,6 +825,7 @@ func TestLogger_PubkeyEvents_PasswordScrubStillApplies(t *testing.T) {
 // scrubs [][]byte field, the existing logfmt password-scrub behavior must
 // be byte-for-byte identical to the old l.password string field approach.
 func TestLogfmt_PasswordScrubUnchanged(t *testing.T) {
+	t.Parallel()
 	const pw = "hunter2"
 	l, buf := newTestLoggerFmt(pw, FormatLogfmt)
 
@@ -834,6 +856,7 @@ func TestLogfmt_PasswordScrubUnchanged(t *testing.T) {
 }
 
 func TestLogger_ForwardOpenFormatting(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLogger("")
 	l.ForwardOpen("1.2.3.4:5678", "192.168.1.1", 8080, "10.0.0.1", 54321)
 	line := lastLine(t, buf)
@@ -858,6 +881,7 @@ func TestLogger_ForwardOpenFormatting(t *testing.T) {
 }
 
 func TestLogger_ForwardCloseFormatting(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLogger("")
 	l.ForwardClose("1.2.3.4:5678", "192.168.1.1", 8080, 1234, 5678, 500*time.Millisecond)
 	line := lastLine(t, buf)
@@ -883,6 +907,7 @@ func TestLogger_ForwardCloseFormatting(t *testing.T) {
 }
 
 func TestLogger_ForwardRejectFormatting(t *testing.T) {
+	t.Parallel()
 	l, buf := newTestLogger("")
 	l.ForwardReject("1.2.3.4:5678", "192.168.1.1", 8080, "over-cap")
 	line := lastLine(t, buf)
@@ -909,6 +934,7 @@ func TestLogger_ForwardRejectFormatting(t *testing.T) {
 // appears in forward-open, forward-close, or forward-reject lines even when
 // it is passed as a field value (defense-in-depth: the scrub covers all emits).
 func TestLogger_ForwardEventsScrubPassword(t *testing.T) {
+	t.Parallel()
 	const pw = "s3cr3t"
 	l, buf := newTestLogger(pw)
 

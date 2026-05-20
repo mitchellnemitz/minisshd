@@ -14,6 +14,7 @@ import (
 // deletion produces a different fingerprint, and re-loading the same
 // file produces the same fingerprint.
 func TestIntegration_HostKeyPersistsAcrossServerRestarts(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "host_key")
 
@@ -54,6 +55,7 @@ func TestIntegration_HostKeyPersistsAcrossServerRestarts(t *testing.T) {
 // so os.WriteFile fails inside generateAndWrite. The expected outcome is
 // a non-nil error and no `host_key` or `host_key.pub` file on disk.
 func TestIntegration_HostKeyParentUnwritable(t *testing.T) {
+	t.Parallel()
 	// Skip on darwin/windows etc. that may surface different permission
 	// semantics; the spec is macOS-first and POSIX umask is honored
 	// identically on Linux for the read-only parent case.
@@ -95,6 +97,7 @@ func TestIntegration_HostKeyParentUnwritable(t *testing.T) {
 // re-derives the .pub at 0o644. This drives the writePub mode-fix branch
 // from a pre-existing-file starting state.
 func TestIntegration_HostKeyPubModeFixedOnRegen(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("permissions-based test not portable to windows")
 	}
@@ -142,6 +145,7 @@ func TestIntegration_HostKeyPubModeFixedOnRegen(t *testing.T) {
 // package-local unit test does the same but reaching the sentinel from a
 // downstream package is part of the public-API contract).
 func TestIntegration_HostKeyMissingParentSentinel(t *testing.T) {
+	t.Parallel()
 	parent := filepath.Join(t.TempDir(), "missing-subdir")
 	path := filepath.Join(parent, "host_key")
 	_, _, err := hostkey.LoadOrGenerate(path)
@@ -155,6 +159,7 @@ func TestIntegration_HostKeyMissingParentSentinel(t *testing.T) {
 // not a directory. We want spec §6 to error rather than try to create
 // children under a non-directory.
 func TestIntegration_HostKeyParentIsFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	parent := filepath.Join(dir, "not-a-dir")
 	if err := os.WriteFile(parent, []byte("regular file\n"), 0o644); err != nil {
@@ -174,6 +179,7 @@ func TestIntegration_HostKeyParentIsFile(t *testing.T) {
 // a low-coverage branch (64.7% on generateAndWrite) because the spec-required
 // scenarios never trip it.
 func TestIntegration_HostKeyPubWriteCollidesWithDirectory(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix-only mode semantics")
 	}

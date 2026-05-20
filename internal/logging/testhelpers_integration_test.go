@@ -97,6 +97,8 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		Limiter:        limiter,
 		SessionService: &session.Service{Shell: opts.shell, Log: logger},
 		Log:            logger,
+		Sleep:          func(time.Duration) {},
+		DrainTimeout:   100 * time.Millisecond,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

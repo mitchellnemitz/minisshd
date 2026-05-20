@@ -46,6 +46,7 @@ func newTestService() (*Service, *bytes.Buffer) {
 // TestBuildEnvNoPty asserts that bare exec gets no TERM and only the
 // whitelisted server-process variables plus filtered LC_*/LANG.
 func TestBuildEnvNoPty(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	st := &sessionState{envFromCh: map[string]string{}}
 	env := s.buildEnv(st)
@@ -66,6 +67,7 @@ func TestBuildEnvNoPty(t *testing.T) {
 
 // TestBuildEnvWithPty asserts that a pty-req's TERM appears in the env.
 func TestBuildEnvWithPty(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	st := &sessionState{
 		envFromCh: map[string]string{},
@@ -81,6 +83,7 @@ func TestBuildEnvWithPty(t *testing.T) {
 // TestBuildEnvChannelOverrides asserts channel-supplied env values win
 // over the server-process value for whitelisted keys.
 func TestBuildEnvChannelOverrides(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	st := &sessionState{envFromCh: map[string]string{"LANG": "C"}}
 	env := s.buildEnv(st)
@@ -106,6 +109,7 @@ func envToMap(env []string) map[string]string {
 // requests and asserts the routing decision without actually forking a
 // shell. Build-of-the-cmd is enough to prove the right branch ran.
 func TestPreSpawnDispatchRouting(t *testing.T) {
+	t.Parallel()
 	t.Run("shell", func(t *testing.T) {
 		s, _ := newTestService()
 		st := &sessionState{envFromCh: map[string]string{}}
@@ -208,6 +212,7 @@ func TestPreSpawnDispatchRouting(t *testing.T) {
 // TestHandlePtyReqAllocFailure asserts §11: a PTY-allocation failure
 // replies false and keeps the channel open.
 func TestHandlePtyReqAllocFailure(t *testing.T) {
+	t.Parallel()
 	s, buf := newTestService()
 	s.allocPTY = func() (ptyHandle, *os.File, error) {
 		return nil, nil, errors.New("simulated ENOMEM")
@@ -227,6 +232,7 @@ func TestHandlePtyReqAllocFailure(t *testing.T) {
 // TestHandlePtyReqSuccess uses a mock PTY allocator and asserts the PTY
 // is recorded and Setsize called with the initial dimensions.
 func TestHandlePtyReqSuccess(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	mock := &mockPty{}
 	s.allocPTY = func() (ptyHandle, *os.File, error) {
@@ -250,6 +256,7 @@ func TestHandlePtyReqSuccess(t *testing.T) {
 // PTY (proves §13.2's "window-change resizes the PTY (asserted against a
 // mock ioctl)" requirement).
 func TestHandleWindowChangeResize(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	mock := &mockPty{}
 	st := &sessionState{ptyMaster: mock}
@@ -271,6 +278,7 @@ func TestHandleWindowChangeResize(t *testing.T) {
 // TestHandleWindowChangeNoPty asserts a window-change without a prior
 // pty-req is a no-op (no panic).
 func TestHandleWindowChangeNoPty(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	st := &sessionState{}
 	payload := appendUint32(nil, 1)
@@ -283,6 +291,7 @@ func TestHandleWindowChangeNoPty(t *testing.T) {
 // TestRunSftpHandsOffToHandler verifies runSftp calls the configured
 // handler and propagates ctx cancellation by closing the channel.
 func TestRunSftpHandsOffToHandler(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	called := atomic.Int32{}
 	s.sftpHandler = func(ch ssh.Channel) error {
@@ -318,6 +327,7 @@ func TestRunSftpHandsOffToHandler(t *testing.T) {
 
 // TestSendExitNilProcessState exercises the defensive nil branch.
 func TestSendExitNilProcessState(t *testing.T) {
+	t.Parallel()
 	s, _ := newTestService()
 	ch := newMockChannel()
 	s.sendExit(ch, nil)

@@ -14,6 +14,7 @@ import (
 // TestIntegration_CorrectCredentialsAllowShell is a smoke test that the
 // auth callback accepts the configured credentials and the session opens.
 func TestIntegration_CorrectCredentialsAllowShell(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -35,6 +36,7 @@ func TestIntegration_CorrectCredentialsAllowShell(t *testing.T) {
 }
 
 func TestIntegration_WrongUserLogsBadUser(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -50,6 +52,7 @@ func TestIntegration_WrongUserLogsBadUser(t *testing.T) {
 }
 
 func TestIntegration_WrongPasswordLogsBadPassword(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -76,6 +79,7 @@ func TestIntegration_WrongPasswordLogsBadPassword(t *testing.T) {
 // See also TestIntegration_MaxAuthTriesCombinedCounter for the combined-counter
 // assertion (publickey probes + password failures sharing a single counter).
 func TestIntegration_SixWrongPasswordsCloseConnection(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 

@@ -20,6 +20,7 @@ func mustParseIP(t *testing.T, s string) net.IP {
 // TestComputeDelay_Sequence verifies the exact backoff table from spec
 // §5: fail_count = 0,1,2,3,4,5,6,7,8 → 0,1,2,4,8,16,32,60,60 seconds.
 func TestComputeDelay_Sequence(t *testing.T) {
+	t.Parallel()
 	want := map[int]time.Duration{
 		0: 0,
 		1: 1 * time.Second,
@@ -48,6 +49,7 @@ func TestComputeDelay_Sequence(t *testing.T) {
 // from spec §5. The fake clock means this test runs in microseconds, not
 // minutes.
 func TestAcquire_DelaySequenceUnderFakeClock(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 	ip := mustParseIP(t, "192.0.2.1")
@@ -79,6 +81,7 @@ func TestAcquire_DelaySequenceUnderFakeClock(t *testing.T) {
 // failure path bumps fail_count and refreshes last_fail. Verified via the
 // public Snapshot() surface.
 func TestRelease_FailureIncrementsCounterAndUpdatesLastFail(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 	ip := mustParseIP(t, "192.0.2.2")
@@ -114,6 +117,7 @@ func TestRelease_FailureIncrementsCounterAndUpdatesLastFail(t *testing.T) {
 // reset: after a failure, advance the fake clock past 10 minutes, then
 // Acquire again — the delay must be zero and the previous counter gone.
 func TestAcquire_LazyExpiryClearsAfterTenMinutes(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 	ip := mustParseIP(t, "192.0.2.3")
@@ -151,6 +155,7 @@ func TestAcquire_LazyExpiryClearsAfterTenMinutes(t *testing.T) {
 // successful auth deletes the per-IP entry so the next attempt sees zero
 // delay.
 func TestRelease_SuccessRemovesEntry(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 	ip := mustParseIP(t, "192.0.2.4")
@@ -183,6 +188,7 @@ func TestRelease_SuccessRemovesEntry(t *testing.T) {
 // remote ::ffff:127.0.0.1 lands under the bare IPv4 key. This is the
 // counterpart to the §13.3 dual-stack integration test.
 func TestAcquire_IPv4MappedIPv6Normalization(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 
@@ -211,6 +217,7 @@ func TestAcquire_IPv4MappedIPv6Normalization(t *testing.T) {
 // TestSnapshot_DefensiveCopy proves mutating the returned map cannot
 // corrupt internal state.
 func TestSnapshot_DefensiveCopy(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 	ip := mustParseIP(t, "192.0.2.5")
@@ -239,6 +246,7 @@ func TestSnapshot_DefensiveCopy(t *testing.T) {
 // fail_count accounting. A concurrent reader hammers Snapshot to expose
 // any race between Acquire/release and Snapshot.
 func TestAcquire_ConcurrentHammering(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 
@@ -314,6 +322,7 @@ func TestAcquire_ConcurrentHammering(t *testing.T) {
 // only on demand; the assertion is "the second Acquire's observed delay
 // is > 0", which only holds if it waited for the first release.
 func TestAcquire_PerIPLockSerializesObservations(t *testing.T) {
+	t.Parallel()
 	clk := NewFakeClock(time.Unix(0, 0))
 	l := New(clk)
 	ip := mustParseIP(t, "192.0.2.99")

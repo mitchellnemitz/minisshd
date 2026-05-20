@@ -99,6 +99,9 @@ func startTestServer(t *testing.T, opts testServerOptions) *testServer {
 		Limiter:        limiter,
 		SessionService: &session.Service{Shell: opts.shell, Log: logger},
 		Log:            logger,
+		// Production time.Sleep is intentional here: this package owns the
+		// real-time backoff timing test. Do not install a no-op sleeper.
+		DrainTimeout: 100 * time.Millisecond,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

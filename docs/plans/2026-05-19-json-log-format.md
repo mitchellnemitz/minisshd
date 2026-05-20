@@ -48,7 +48,7 @@ Date: 2026-05-19
   (`"\"event\":\"listening\""`) or use a format-aware helper.
 - **S4**: Made the `logFormatSet` variable declaration and the `fs.Visit` switch
   case update explicit in the `cmd/minisshd/main.go` diff.
-- **M1**: Added `TestConcurrentEmission` (logging_test.go line 287, direct call to
+- **M1**: Added `TestConcurrentEmission` (in `logging_test.go`, direct call to
   `New(buf, "")`) to the call-site sweep.
 - **M2**: Added a one-sentence callout to the spec-amendment text noting that
   `duration` and `next_delay` are strings in logfmt (`time.Duration.String()`) but
@@ -90,7 +90,7 @@ pass.
 
 ### §9 — replace the opening paragraph
 
-**Current first paragraph of §9 (lines 266 in the spec) reads:**
+**Current first paragraph of §9 reads:**
 
 > Logs go to **stdout**, line-buffered. Format: one event per line, RFC3339
 > timestamp, level, event name, then space-separated `key=value` pairs
@@ -571,20 +571,20 @@ be updated to the new three-arg `New(w, password, format)` signature:
 - `cmd/minisshd/main.go` — `logging.New(stdout, password)` → `logging.New(stdout, password, logFormat)`
 
 **Test helpers in `internal/logging` (3 sites):**
-- `internal/logging/logging_test.go` — `newTestLogger` helper calls `New(buf, password)` (used by all unit tests including `TestConcurrentEmission` at line 287 which calls `New(buf, "")` directly)
-- `internal/logging/logging_integration_test.go` — line 26: `logging.New(&buf, password)` (direct call, not via `newTestLogger`)
-- `internal/logging/testhelpers_integration_test.go` — line 75: `logging.New(logBuf, opts.password)`
+- `internal/logging/logging_test.go` — `newTestLogger` helper calls `New(buf, password)` (used by all unit tests including `TestConcurrentEmission` in `logging_test.go: TestConcurrentEmission` which calls `New(buf, "")` directly)
+- `internal/logging/logging_integration_test.go: TestIntegration_PasswordNeverAppearsInStructuredEvents` — `logging.New(&buf, password)` (direct call, not via `newTestLogger`)
+- `internal/logging/testhelpers_integration_test.go: startTestServer` — `logging.New(logBuf, opts.password)`
 
 **Test helpers in `internal/server` (2 sites):**
-- `internal/server/testhelpers_integration_test.go` — line 97: `logging.New(logBuf, opts.password)`
-- `internal/server/server_test.go` — line 61: `logging.New(&buf, "hunter2")`
-- `internal/server/auth_test.go` — line 278: `logging.New(&buf, "supersecret123")`
+- `internal/server/testhelpers_integration_test.go: startTestServer` — `logging.New(logBuf, opts.password)`
+- `internal/server/server_test.go: newTestServer` — `logging.New(&buf, "hunter2")`
+- `internal/server/auth_test.go: TestPasswordCallback_AuthOKDoesNotLeakPasswordToLogger` — `logging.New(&buf, "supersecret123")`
 
 **Test helpers in other packages (3 sites):**
-- `internal/auth/testhelpers_integration_test.go` — line 78: `logging.New(logBuf, opts.password)`
-- `internal/ratelimit/testhelpers_integration_test.go` — line 77: `logging.New(logBuf, opts.password)`
-- `internal/session/testhelpers_integration_test.go` — line 75: `logging.New(logBuf, opts.password)`
-- `internal/session/service_test.go` — line 26: `logging.New(buf, "")` inside `newTestService()`
+- `internal/auth/testhelpers_integration_test.go: startTestServer` — `logging.New(logBuf, opts.password)`
+- `internal/ratelimit/testhelpers_integration_test.go: startTestServer` — `logging.New(logBuf, opts.password)`
+- `internal/session/testhelpers_integration_test.go: startTestServer` — `logging.New(logBuf, opts.password)`
+- `internal/session/service_test.go: newTestService` — `logging.New(buf, "")`
 
 All test callers that want logfmt (the default, covering all existing tests) pass
 `logging.FormatLogfmt`. New JSON-specific tests pass `logging.FormatJSON`. The
@@ -920,7 +920,7 @@ Additional JSON-specific tests:
 
 Tests live in `cmd/minisshd/main_test.go` (already exists alongside `main.go`).
 
-**Sentinel note:** `runUntilListening` (line 95 of `main_test.go`) waits for
+**Sentinel note:** `runUntilListening` (in `main_test.go: runUntilListening`) waits for
 the substring `" listening "` (with flanking spaces). This sentinel matches
 logfmt output (`... INFO listening bind=...`) but does **not** match JSON
 output (`{"ts":...,"event":"listening",...}`). The two new tests that reach
@@ -1195,7 +1195,7 @@ to pass the whole `field` struct and gave a complete, concrete duration case usi
 
 **S3 — `runUntilListening` uses `" listening "` sentinel that won't match JSON**
 
-Agreed. Verified by reading `main_test.go` line 95: the sentinel is `" listening "`
+Agreed. Verified by reading `main_test.go: runUntilListening`: the sentinel is `" listening "`
 with flanking spaces. In JSON output the event appears as `"event":"listening"` with
 no flanking spaces. Both new JSON-reaching startup tests
 (`TestRun_LogFormatEnvIsRespected` and `TestRun_LogFormatBannerUnaffected`) would
@@ -1215,7 +1215,7 @@ switch in the `cmd/minisshd/main.go` section.
 
 **M1 — `TestConcurrentEmission` calls `New` directly inside the logging package**
 
-Agreed. `TestConcurrentEmission` at `logging_test.go` line 287 calls `New(buf, "")`
+Agreed. `TestConcurrentEmission` in `logging_test.go: TestConcurrentEmission` calls `New(buf, "")`
 directly (not via `newTestLogger`). This is a direct call that must be updated to the
 three-arg signature. Disposition: added this to the call-site sweep.
 

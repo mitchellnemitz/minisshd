@@ -45,7 +45,7 @@ All edits land in `SPEC.md`. Exact wording follows.
 
 ### 2.1 §7 — table addition and rejection-list trim
 
-Current (line 169 onward) lists five accepted invocations in a table, followed by the reject list. Make the following changes:
+Current §7 lists five accepted invocations in a table, followed by the reject list. Make the following changes:
 
 **a) Add a new row to the accepted-features table** (insert after the `scp -O` row, before "The following must be explicitly rejected"):
 
@@ -133,7 +133,7 @@ the threat model.
 
 ### 2.3 §8 — single-line carve-out
 
-Append one sentence to §8 (Session handling) header paragraph, immediately after the "request-type combinations table" introduction, before the table itself — between current lines 191 and 192:
+Append one sentence to §8 (Session handling) header paragraph, immediately after the "request-type combinations table" introduction, before the table itself:
 
 ```
 `direct-tcpip` channels (§7.1) are not session channels and are not
@@ -825,7 +825,7 @@ Tests are listed at three layers. Each new test gets a `Test*` function name so 
 - `TestParseDirectTCPIP_OK` — well-formed payload with `127.0.0.1`, port 80, `1.2.3.4`, port 12345 round-trips.
 - `TestParseDirectTCPIP_OK_OriginPortZero` — origin port 0 is accepted (some clients send 0 for ephemeral sockets).
 - `TestParseDirectTCPIP_MalformedTruncated` — 4 random bytes → error.
-- `TestParseDirectTCPIP_MalformedTrailingGarbage` — well-formed payload with one extra trailing byte → error (unconditional; `ssh.Unmarshal` is strict and rejects trailing bytes, confirmed at `messages.go` line 507).
+- `TestParseDirectTCPIP_MalformedTrailingGarbage` — well-formed payload with one extra trailing byte → error (unconditional; `ssh.Unmarshal` is strict and rejects trailing bytes, confirmed in `messages.go: Unmarshal`).
 - `TestParseDirectTCPIP_DestPortZero` — dest-port 0 → error "dest-port out of range".
 - `TestParseDirectTCPIP_DestPortTooLarge` — dest-port 70000 → error.
 - `TestParseDirectTCPIP_EmptyDestHost` — empty dest host → currently allowed by the parser (an empty hostname dials to ""; OS returns ENOENT/Invalid argument, which surfaces as `dial-failed`). Document the choice. We don't reject in the parser because the spec says only the payload structure matters there.

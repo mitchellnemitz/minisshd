@@ -108,7 +108,7 @@ func passwordCallback(
 // first encounter of a (user, key) pair per connection — regardless of
 // whether the client is probing (isQuery=true, no signature attached) or
 // presenting a real signature (isQuery=false). The library uses a size-1
-// cache (maxCachedPubKeys=1, ssh/server.go lines 212–238) to avoid calling
+// cache (maxCachedPubKeys=1, ssh/server.go: pubKeyCache) to avoid calling
 // the callback twice for the common probe-then-sign sequence with the same
 // key. The callback has no way to distinguish a query from a real signature;
 // it fires on first encounter and its result is cached for the subsequent

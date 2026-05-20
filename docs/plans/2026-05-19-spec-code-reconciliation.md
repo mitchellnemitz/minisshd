@@ -223,8 +223,8 @@ accurate.
 **Disposition: AGREE — fixed.**
 
 Grepped `logging.go` for all `intField(` and inline `fieldInt` literal calls. Confirmed
-`line` is emitted as an integer by both `PubkeyParseError` (line 312) and
-`PubkeyOptionIgnored` (line 322). Added `line` to the proposed integer list in D-04 and
+`line` is emitted as an integer by both `PubkeyParseError` and
+`PubkeyOptionIgnored`. Added `line` to the proposed integer list in D-04 and
 to the Spec change set table.
 
 Complete proposed integer-field list after fix:
@@ -262,9 +262,9 @@ The accurate-sections claim (§2, §3, §5, §6, §10, §11, §12) is retained.
 
 **Disposition: AGREE — prose tightened.**
 
-Verified in `internal/server/auth.go` lines 137–140: `userOK` and `keyOK` are captured
+Verified in `internal/server/auth.go: publickeyCallback`: `userOK` and `keyOK` are captured
 on separate lines before `ok := userOK && keyOK`. The constant-time operations occur
 inside `checkUsernameWith` (credentials package) and `Keyset.Check` (pubkey package);
-the combining `&&` is in `internal/server/auth.go`. Updated D-07's "Code does" and
+the combining `&&` is in `internal/server/auth.go: publickeyCallback`. Updated D-07's "Code does" and
 "Proposed change" rows to name the correct file and accurately describe the package
 boundary, without weakening the security invariant statement.

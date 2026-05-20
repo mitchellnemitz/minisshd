@@ -115,7 +115,7 @@ signature failures, and rejected-key queries all share a single combined
 `authFailures` counter in `golang.org/x/crypto/ssh`. The spec sets
 `MaxAuthTries = 6` (**breaking from the previous catch-up value of 3**;
 rationale below). The current `golang.org/x/crypto/ssh` library (v0.51.0,
-`ssh/server.go` lines 843–845) exempts only the mandatory initial `none`
+`ssh/server.go: serverAuthenticate`) exempts only the mandatory initial `none`
 probe from this counter ("Allow initial attempt of 'none' without penalty");
 every other failure — including rejected-key queries — increments
 `authFailures`.
@@ -142,7 +142,7 @@ semantics: exempt only `none`, count all other rejections.
 claimed that pubkey queries do not count toward `authFailures`. That claim
 was incorrect. The library source shows that the `isQuery=true` path sets
 `authErr = candidate.result` for rejected keys and then falls through to the
-shared `authFailures++` block at lines 843–845 of `server.go`. Only accepted
+shared `authFailures++` block in `server.go: serverAuthenticate`. Only accepted
 queries (`candidate.result == nil`) use `continue userAuthLoop` before
 reaching that block.
 
@@ -283,7 +283,7 @@ rotation, etc.), the keyset reload remains.
 
 ### 2.2 §2 — Command-line interface (flags table, env table, validation steps)
 
-Current §2 flags table (lines 30-38) is replaced with the following additions
+Current §2 flags table is replaced with the following additions
 (`--auth` and `--authorized-keys`):
 
 ```markdown
@@ -299,7 +299,7 @@ Current §2 flags table (lines 30-38) is replaced with the following additions
 | `--authorized-keys PATH` | `$XDG_CONFIG_HOME/minisshd/authorized_keys` (else `~/.config/minisshd/authorized_keys`) | Path to the OpenSSH-format authorized-keys file. Read only when `--auth` includes `publickey`. A missing file is treated as zero accepted keys (with a single `WARN` log at startup); a present-but-unreadable file is a startup error. |
 ```
 
-Current §2 env table (lines 41-44) gains a row:
+Current §2 env table gains a row:
 
 ```markdown
 | Var | Purpose |
@@ -310,7 +310,7 @@ Current §2 env table (lines 41-44) gains a row:
 | `MINISSHD_AUTHORIZED_KEYS` | Authorized-keys file path. Used only if `--authorized-keys` is not provided. |
 ```
 
-Current §2 step 2 (line 51) — no change to its wording, but a new step 2b is
+Current §2 step 2 — no change to its wording, but a new step 2b is
 inserted **between** step 2 and step 3:
 
 ```markdown
@@ -345,13 +345,13 @@ inserted **between** step 2 and step 3:
       password cannot rescue the server from having zero accepted keys.
 ```
 
-Current §2 step 8 (line 57) gains one clarifying sentence at the end:
+Current §2 step 8 gains one clarifying sentence at the end:
 
 ```markdown
 8. **Only after the listener is successfully bound**, if no password was resolved in step 2, generate a fresh 6-digit numeric password using a cryptographically secure RNG (`crypto/rand` in Go) and print exactly one line to stdout: `Password: 482910`. This is the only path that writes the password to stdout. If a password was supplied via flag or env, no banner is printed. **A random password is only generated when the resolved `--auth` set includes `password` and no password was supplied; in `publickey`-only mode no password is generated and no banner is printed.**
 ```
 
-Current §2 step 9 (line 58) — the `listening` event payload gains two new
+Current §2 step 9 — the `listening` event payload gains two new
 fields:
 
 ```markdown
@@ -418,7 +418,7 @@ Append to the existing exit-code table:
 ### 2.5 §12 — Explicit non-goals
 
 Current §12 bullet "Multiple users, key-based auth, certificates, or 2FA."
-(line 337) is replaced with:
+is replaced with:
 
 ```markdown
 - Multiple users, SSH certificates, or 2FA. (Public-key auth alongside
@@ -753,7 +753,7 @@ rather than retrofitting old ones.
   the **first** encounter of a (user, key) pair per connection — regardless
   of whether the client is probing (`isQuery=true`, no signature attached)
   or presenting a real signature (`isQuery=false`). The library uses a
-  size-1 cache (`maxCachedPubKeys = 1`, `ssh/server.go` lines 212–238) to
+  size-1 cache (`maxCachedPubKeys = 1` in `ssh/server.go: pubKeyCache`) to
   avoid calling the callback twice for the common probe-then-sign sequence
   with the same key. The callback has **no way to distinguish** a query
   from a real signature; it fires on first encounter and its result is
@@ -828,7 +828,7 @@ rather than retrofitting old ones.
 - `MaxAuthTries` is raised from `3` to `6`. The comment is updated to
   explain: (a) both password and publickey failures share a single counter;
   (b) rejected-key pubkey queries also count toward the limit (library
-  behavior, per `ssh/server.go` lines 843–845 in v0.51.0); (c) the value
+  behavior, per `ssh/server.go: serverAuthenticate` in v0.51.0); (c) the value
   of 6 accommodates up to 3 rejected-key probes plus 3 real credential
   attempts, which a multi-key SSH agent session requires. The previous
   value of 3 was a pre-pubkey choice that assumed only password failures
@@ -1061,7 +1061,7 @@ operators can correlate `auth-fail` events with attacker fingerprints).
 | `internal/server/pubkey_integration_test.go` | `TestIntegration_BothMethodsPubkeyPath` | `--auth password,publickey`; client uses pubkey → `auth-ok method=publickey`. |
 | `internal/server/pubkey_integration_test.go` | `TestIntegration_NeitherMethodAllowedRejects` | (negative) start with `--auth=""` and assert run() returns exit 2 before binding. |
 | `internal/server/pubkey_integration_test.go` | `TestIntegration_SIGHUPReload` | Live process; SIGHUP triggers reload; verify auth flips from key A to key B; finally a malformed file SIGHUP leaves key B working. |
-| `internal/server/pubkey_integration_test.go` | `TestIntegration_MaxAuthTriesCombinedCounter` | Server `MaxAuthTries=6`, `--auth password,publickey`. Scenario A: client sends 3 rejected-key probes then 3 wrong passwords — disconnected on 6th failure; log has exactly 6 `auth-fail` lines. Scenario B: 6 password failures on a fresh connection — disconnected after 6. Asserts rejected-key queries increment the counter (library behavior, `server.go` lines 843–845). |
+| `internal/server/pubkey_integration_test.go` | `TestIntegration_MaxAuthTriesCombinedCounter` | Server `MaxAuthTries=6`, `--auth password,publickey`. Scenario A: client sends 3 rejected-key probes then 3 wrong passwords — disconnected on 6th failure; log has exactly 6 `auth-fail` lines. Scenario B: 6 password failures on a fresh connection — disconnected after 6. Asserts rejected-key queries increment the counter (library behavior, `server.go: serverAuthenticate`). |
 | `internal/server/pubkey_integration_test.go` | `TestIntegration_PubkeyFailureFeedsRateLimit` | 5 separate connections, each one wrong-key, then a 6th with correct credentials; the 6th's auth wall-clock is in `[13s, 21s]`. Skipped under `-short`. |
 | `internal/server/pubkey_integration_test.go` | `TestIntegration_PubkeyFingerprintMatchesSSHKeygen` | Generate a key in-test; capture the `auth-ok` fingerprint; compare to `ssh.FingerprintSHA256` directly. |
 
@@ -1226,7 +1226,7 @@ The implementation pass is complete when **all** of the following hold:
    password failures, publickey signature failures, AND rejected-key
    pubkey queries. A previous version of this plan claimed pubkey queries
    do not count; that was incorrect (see §4 MaxAuthTries rationale and
-   the library source analysis at `server.go` lines 843–845). The value
+   the library source analysis at `server.go: serverAuthenticate`). The value
    `MaxAuthTries = 6` (changed from 3) reflects this corrected
    understanding. `TestIntegration_MaxAuthTriesCombinedCounter` is updated
    to assert the library increments `authFailures` for rejected-key
@@ -1361,13 +1361,13 @@ The check is now simply: `methods == {publickey}` AND zero keys loaded → exit 
 ## Adversarial review responses (iter 2)
 
 ### Fix A — Incorrect doc comment on PublicKeyCallback invocation semantics
-**Resolution: Agreed and fixed.** The iter-1 S1 addition ("the library invokes the callback only for real signature verifications, has_signature=true") was wrong. The library source (`server.go` lines 668–688) shows `PublicKeyCallback` is called unconditionally on the first encounter of a (user, key) pair per connection, before the `isQuery` branch. The callback has no way to know whether it is serving a query or a real signature. The doc comment in the `publickeyCallback` description has been replaced with an accurate description of the library's cache-then-branch pattern, citing the exact source lines.
+**Resolution: Agreed and fixed.** The iter-1 S1 addition ("the library invokes the callback only for real signature verifications, has_signature=true") was wrong. The library source (`server.go: serverAuthenticate`) shows `PublicKeyCallback` is called unconditionally on the first encounter of a (user, key) pair per connection, before the `isQuery` branch. The callback has no way to know whether it is serving a query or a real signature. The doc comment in the `publickeyCallback` description has been replaced with an accurate description of the library's cache-then-branch pattern, citing the exact source lines.
 
 ### Fix B — Rate-limiter design: queries feed the rate limiter
 **Resolution: Agreed — Option (i) chosen.** The `lim.Acquire` call remains at the top of `publickeyCallback` and fires for every first-seen (user, key) pair, including probe-only keys. This is documented as a deliberate, tighter-than-OpenSSH posture. Two new unit tests (`TestPublickeyCallback_QueryAndSignBothAcquire`, `TestPublickeyCallback_CacheEvictionCausesDoubleAcquire`) are added to the test table to make this behavior explicit and regression-proof. Options (ii) and (iii) were considered and rejected: (ii) requires access to the library's internal `isQuery` flag, which is not exposed; (iii) per-callback state tracking would duplicate the library's own cache without offering stronger guarantees.
 
 ### Fix C — MaxAuthTries math: rejected-key queries burn authFailures slots
-**Resolution: Agreed and fixed.** The library source (`server.go` lines 843–845) shows `authFailures++` is reached for any auth failure that is not the initial `none` probe — including the `isQuery=true` path when `authErr = candidate.result` is non-nil. A client probing 3 rejected keys before signing consumes 3 `authFailures` slots. `MaxAuthTries` is raised from 3 to 6 in both the §4 spec amendment and the `config.go` code-changes section, accommodating up to 3 rejected-key probes plus 3 real credential attempts. The §4 explanation includes a "why 6" rationale. The `TestIntegration_MaxAuthTriesCombinedCounter` test description is updated accordingly. The existing `TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt` test must also be updated since the password-only path is also affected by the MaxAuthTries increase (a password-only client now gets 6 attempts, not 3).
+**Resolution: Agreed and fixed.** The library source (`server.go: serverAuthenticate`) shows `authFailures++` is reached for any auth failure that is not the initial `none` probe — including the `isQuery=true` path when `authErr = candidate.result` is non-nil. A client probing 3 rejected keys before signing consumes 3 `authFailures` slots. `MaxAuthTries` is raised from 3 to 6 in both the §4 spec amendment and the `config.go` code-changes section, accommodating up to 3 rejected-key probes plus 3 real credential attempts. The §4 explanation includes a "why 6" rationale. The `TestIntegration_MaxAuthTriesCombinedCounter` test description is updated accordingly. The existing `TestIntegration_ThreeWrongPasswordsCloseConnectionAfterThirdAttempt` test must also be updated since the password-only path is also affected by the MaxAuthTries increase (a password-only client now gets 6 attempts, not 3).
 
 ### Fix D — Cache-size-1 subtlety: probe→evict→sign causes double invocation
 **Resolution: Agreed and acknowledged.** The cache holds at most 1 entry (`maxCachedPubKeys = 1`). If a client probes key A (rejected, cached), then key B (any result, evicts A), then signs with A — the cache misses and `PublicKeyCallback` fires again for A. This means `lim.Acquire` runs twice for key A. This is accepted as conservative behavior (more backoff, not less) and safe (the key-set check is idempotent). A new unit test documents this explicitly. No mitigation is applied.

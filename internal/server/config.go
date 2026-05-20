@@ -54,7 +54,7 @@ const ServerVersion = "SSH-2.0-minisshd"
 // accept this key?" against an unknown key). Password failures, publickey
 // signature failures, and rejected-key queries all share a single combined
 // authFailures counter in golang.org/x/crypto/ssh. The current library
-// (v0.51.0, ssh/server.go lines 843–845) exempts only the mandatory initial
+// (v0.51.0, ssh/server.go: serverAuthenticate) exempts only the mandatory initial
 // `none` probe from this counter; every other failure — including
 // rejected-key queries — increments authFailures.
 //

@@ -15,6 +15,7 @@ import (
 // --auth publickey and asserts that a client presenting the matching key is
 // accepted, with auth-ok method=publickey in the log.
 func TestIntegration_PublickeyOnlyAuthenticates(t *testing.T) {
+	t.Parallel()
 	signer := generateTestHostKey(t)
 	pub := signer.PublicKey()
 
@@ -30,8 +31,9 @@ func TestIntegration_PublickeyOnlyAuthenticates(t *testing.T) {
 	}
 	defer cli.Close()
 
-	if !waitForLog(t, ts.logBuf, "event=auth-ok", 5*time.Second) &&
-		!waitForLog(t, ts.logBuf, "auth-ok", 5*time.Second) {
+	// "auth-ok" appears in both logfmt (as the event token) and JSON (as the
+	// value of "event") encodings, so a single substring match is sufficient.
+	if !waitForLog(t, ts.logBuf, "auth-ok", 5*time.Second) {
 		t.Fatalf("expected auth-ok in log:\n%s", ts.logBuf.String())
 	}
 	if !waitForLog(t, ts.logBuf, "method=publickey", 2*time.Second) {
@@ -47,6 +49,7 @@ func TestIntegration_PublickeyOnlyAuthenticates(t *testing.T) {
 // auth and verifies that presenting a key not in the authorized_keys file
 // results in an auth-fail with reason=bad-key.
 func TestIntegration_PublickeyOnlyWrongKeyFails(t *testing.T) {
+	t.Parallel()
 	acceptedSigner := generateTestHostKey(t)
 	wrongSigner := generateTestHostKey(t)
 
@@ -69,6 +72,7 @@ func TestIntegration_PublickeyOnlyWrongKeyFails(t *testing.T) {
 // TestIntegration_PublickeyOnlyWrongUserFails verifies that a client presenting
 // the correct key but wrong username is rejected with reason=bad-user.
 func TestIntegration_PublickeyOnlyWrongUserFails(t *testing.T) {
+	t.Parallel()
 	signer := generateTestHostKey(t)
 	pub := signer.PublicKey()
 
@@ -95,6 +99,7 @@ func TestIntegration_PublickeyOnlyWrongUserFails(t *testing.T) {
 // TestIntegration_PasswordOnlyBaselinePreserved verifies that the default
 // password-only path continues to work after pubkey additions.
 func TestIntegration_PasswordOnlyBaselinePreserved(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -116,6 +121,7 @@ func TestIntegration_PasswordOnlyBaselinePreserved(t *testing.T) {
 // publickey are configured, a client using password is authenticated with
 // method=password.
 func TestIntegration_BothMethodsPasswordPath(t *testing.T) {
+	t.Parallel()
 	signer := generateTestHostKey(t)
 	pub := signer.PublicKey()
 
@@ -140,6 +146,7 @@ func TestIntegration_BothMethodsPasswordPath(t *testing.T) {
 // publickey are configured, a client using pubkey is authenticated with
 // method=publickey.
 func TestIntegration_BothMethodsPubkeyPath(t *testing.T) {
+	t.Parallel()
 	signer := generateTestHostKey(t)
 	pub := signer.PublicKey()
 
@@ -164,6 +171,7 @@ func TestIntegration_BothMethodsPubkeyPath(t *testing.T) {
 // with it, and asserts the fingerprint in the auth-ok log matches
 // ssh.FingerprintSHA256 directly.
 func TestIntegration_PubkeyFingerprintMatchesSSHKeygen(t *testing.T) {
+	t.Parallel()
 	signer := generateTestHostKey(t)
 	pub := signer.PublicKey()
 
@@ -192,6 +200,7 @@ func TestIntegration_PubkeyFingerprintMatchesSSHKeygen(t *testing.T) {
 // Scenario A: 3 rejected-key probes (wrong keys) then 3 wrong passwords.
 // After 6 total failures the connection is closed.
 func TestIntegration_MaxAuthTriesCombinedCounter(t *testing.T) {
+	t.Parallel()
 	// Accepted key (never presented to the client, so all keys are rejected).
 	accepted := generateTestHostKey(t)
 	pub := accepted.PublicKey()
@@ -249,6 +258,7 @@ func TestIntegration_MaxAuthTriesCombinedCounter(t *testing.T) {
 // from the same IP incur exponential backoff — identical to the password path.
 // Skipped under -short.
 func TestIntegration_PubkeyFailureFeedsRateLimit(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("rate-limit timing test; skipped under -short")
 	}
@@ -257,8 +267,9 @@ func TestIntegration_PubkeyFailureFeedsRateLimit(t *testing.T) {
 	pub := accepted.PublicKey()
 
 	ts := startTestServer(t, testServerOptions{
-		authMethods:  auth.Methods{auth.MethodPublickey},
-		acceptedKeys: []ssh.PublicKey{pub},
+		authMethods:        auth.Methods{auth.MethodPublickey},
+		acceptedKeys:       []ssh.PublicKey{pub},
+		realRateLimitSleep: true, // this test verifies actual wall-clock backoff
 	})
 	defer ts.cleanup()
 
@@ -307,6 +318,7 @@ func TestIntegration_PubkeyFailureFeedsRateLimit(t *testing.T) {
 //     pubkey-reload-failed; assert B still authenticates (old keyset
 //     preserved).
 func TestIntegration_SIGHUPReload(t *testing.T) {
+	t.Parallel()
 	signerA := generateTestHostKey(t)
 	signerB := generateTestHostKey(t)
 	pubA := signerA.PublicKey()
@@ -379,6 +391,7 @@ func TestIntegration_SIGHUPReload(t *testing.T) {
 // connection is rejected. Here we configure a password-only server and
 // present only a publickey; the client should fail to authenticate.
 func TestIntegration_NeitherMethodAllowedRejects(t *testing.T) {
+	t.Parallel()
 	// Server is password-only; we will attempt pubkey-only from the client.
 	ts := startTestServer(t, testServerOptions{
 		authMethods: auth.Methods{auth.MethodPassword},

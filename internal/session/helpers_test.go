@@ -9,6 +9,7 @@ import (
 
 // TestFilterEnv covers spec §8.1 step 4 and §13.2 "Env-var filter".
 func TestFilterEnv(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		want bool
@@ -40,6 +41,7 @@ func TestFilterEnv(t *testing.T) {
 
 // TestIsSftpSubsystem covers spec §7 strict subsystem comparison.
 func TestIsSftpSubsystem(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		in   string
 		want bool
@@ -64,6 +66,7 @@ func TestIsSftpSubsystem(t *testing.T) {
 
 // TestSignalName covers spec §13.2 POSIX→SSH mapping.
 func TestSignalName(t *testing.T) {
+	t.Parallel()
 	type want struct {
 		name string
 		err  string
@@ -100,6 +103,7 @@ func TestSignalName(t *testing.T) {
 // TestSignalNameUnmapped asserts the fallback branch returns TERM with an
 // `unmapped signal:` error message.
 func TestSignalNameUnmapped(t *testing.T) {
+	t.Parallel()
 	n, e := signalName(syscall.Signal(99))
 	if n != "TERM" {
 		t.Fatalf("name = %q, want TERM", n)
@@ -112,6 +116,7 @@ func TestSignalNameUnmapped(t *testing.T) {
 // TestParsePtyReq parses a well-formed RFC 4254 §6.2 payload and a few
 // malformed variants.
 func TestParsePtyReq(t *testing.T) {
+	t.Parallel()
 	payload := makeSSHString("xterm-256color")
 	payload = appendUint32(payload, 132)
 	payload = appendUint32(payload, 47)
@@ -140,6 +145,7 @@ func TestParsePtyReq(t *testing.T) {
 
 // TestParseEnvReq covers the env-request parser.
 func TestParseEnvReq(t *testing.T) {
+	t.Parallel()
 	p := append(makeSSHString("LC_ALL"), makeSSHString("en_US.UTF-8")...)
 	e, err := parseEnvReq(p)
 	if err != nil {
@@ -155,6 +161,7 @@ func TestParseEnvReq(t *testing.T) {
 
 // TestParseWindowChange covers the window-change parser.
 func TestParseWindowChange(t *testing.T) {
+	t.Parallel()
 	p := appendUint32(nil, 100)
 	p = appendUint32(p, 30)
 	p = appendUint32(p, 800)
@@ -173,6 +180,7 @@ func TestParseWindowChange(t *testing.T) {
 
 // TestParseExecCommand covers the exec-command parser.
 func TestParseExecCommand(t *testing.T) {
+	t.Parallel()
 	got, err := parseExecCommand(makeSSHString("echo hi"))
 	if err != nil {
 		t.Fatalf("parseExecCommand: %v", err)
@@ -187,6 +195,7 @@ func TestParseExecCommand(t *testing.T) {
 
 // TestParseSubsystemName covers the subsystem-name parser.
 func TestParseSubsystemName(t *testing.T) {
+	t.Parallel()
 	got, err := parseSubsystemName(makeSSHString("sftp"))
 	if err != nil {
 		t.Fatalf("parseSubsystemName: %v", err)
@@ -198,6 +207,7 @@ func TestParseSubsystemName(t *testing.T) {
 
 // TestExitStatusPayload asserts the wire layout.
 func TestExitStatusPayload(t *testing.T) {
+	t.Parallel()
 	p := exitStatusPayload(127)
 	if len(p) != 4 {
 		t.Fatalf("len = %d", len(p))
@@ -209,6 +219,7 @@ func TestExitStatusPayload(t *testing.T) {
 
 // TestExitSignalPayload asserts the wire layout matches RFC 4254 §6.10.
 func TestExitSignalPayload(t *testing.T) {
+	t.Parallel()
 	p := exitSignalPayload("TERM", true, "killed")
 	// string "TERM" | byte 1 | string "killed" | string ""
 	name, rest, ok := readSSHString(p)

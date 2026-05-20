@@ -143,6 +143,7 @@ func newFakeLimiterWithKey(key string) *fakeLimiter {
 }
 
 func TestPasswordCallback_SuccessLogsAuthOK_ReleasesTrue(t *testing.T) {
+	t.Parallel()
 	lim := newFakeLimiterWithKey("127.0.0.1")
 	lim.delay = 0
 	creds := &fakeCreds{ok: true, reason: ""}
@@ -172,6 +173,7 @@ func TestPasswordCallback_SuccessLogsAuthOK_ReleasesTrue(t *testing.T) {
 }
 
 func TestPasswordCallback_FailureLogsBadUser_ReleasesFalse(t *testing.T) {
+	t.Parallel()
 	lim := newFakeLimiterWithKey("10.0.0.5")
 	lim.delay = 0
 	creds := &fakeCreds{ok: false, reason: auth.ReasonBadUser}
@@ -208,6 +210,7 @@ func TestPasswordCallback_FailureLogsBadUser_ReleasesFalse(t *testing.T) {
 }
 
 func TestPasswordCallback_FailureLogsBadPassword(t *testing.T) {
+	t.Parallel()
 	lim := newFakeLimiterWithKey("10.0.0.5")
 	creds := &fakeCreds{ok: false, reason: auth.ReasonBadPassword}
 	logger := &recordingAuthLogger{}
@@ -225,6 +228,7 @@ func TestPasswordCallback_FailureLogsBadPassword(t *testing.T) {
 }
 
 func TestPasswordCallback_SleepHappensBeforeCheck(t *testing.T) {
+	t.Parallel()
 	// Order of operations: Acquire → sleep(delay) → Check → release.
 	// We confirm by setting a non-zero delay and a custom sleeper that
 	// captures whether Check has been called by the time sleep is invoked.
@@ -255,6 +259,7 @@ func TestPasswordCallback_SleepHappensBeforeCheck(t *testing.T) {
 }
 
 func TestPasswordCallback_IPv4MappedV6Normalization(t *testing.T) {
+	t.Parallel()
 	// A connection arriving on a dual-stack listener has RemoteAddr.IP
 	// equal to ::ffff:127.0.0.1. The callback must look up the snapshot
 	// under the normalized "127.0.0.1" key, not the v6-mapped form.
@@ -276,6 +281,7 @@ func TestPasswordCallback_IPv4MappedV6Normalization(t *testing.T) {
 }
 
 func TestPasswordCallback_AuthOKDoesNotLeakPasswordToLogger(t *testing.T) {
+	t.Parallel()
 	// Defense-in-depth: even though our recordingAuthLogger captures
 	// fields directly, route through a real *logging.Logger and check
 	// that the password substring never appears in the output. Spec §9.
@@ -295,6 +301,7 @@ func TestPasswordCallback_AuthOKDoesNotLeakPasswordToLogger(t *testing.T) {
 }
 
 func TestNextDelay_MatchesSpecSequence(t *testing.T) {
+	t.Parallel()
 	// Spec §5: 1s, 2s, 4s, 8s, 16s, 32s, 60s (cap), 60s.
 	cases := []struct {
 		failCount int
@@ -318,6 +325,7 @@ func TestNextDelay_MatchesSpecSequence(t *testing.T) {
 }
 
 func TestExtractIP_TCPAddr(t *testing.T) {
+	t.Parallel()
 	ip := extractIP(&net.TCPAddr{IP: net.ParseIP("198.51.100.7"), Port: 22})
 	if ip.String() != "198.51.100.7" {
 		t.Fatalf("extractIP = %v, want 198.51.100.7", ip)

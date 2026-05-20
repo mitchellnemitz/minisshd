@@ -7,6 +7,7 @@ import (
 )
 
 func TestCredentials_Check_AllFourCombinations(t *testing.T) {
+	t.Parallel()
 	creds := NewCredentials("alice", "hunter2")
 
 	cases := []struct {
@@ -34,6 +35,7 @@ func TestCredentials_Check_AllFourCombinations(t *testing.T) {
 }
 
 func TestCredentials_Check_NonEmptyConfiguredCredentials(t *testing.T) {
+	t.Parallel()
 	// Unicode and long-passphrase acceptance: building Credentials with
 	// these values, then verifying with them, must succeed; verifying
 	// with anything else must fail with the expected reason.
@@ -68,6 +70,7 @@ func TestCredentials_Check_NonEmptyConfiguredCredentials(t *testing.T) {
 // is wrong. It uses checkWith with a wrapper that counts invocations,
 // then asserts the count is 2 across all four input combinations.
 func TestCredentials_Check_NoShortCircuit(t *testing.T) {
+	t.Parallel()
 	c := NewCredentials("alice", "hunter2")
 	cases := []struct {
 		name       string
@@ -98,6 +101,7 @@ func TestCredentials_Check_NoShortCircuit(t *testing.T) {
 // (true,"") for the correct user and (false,ReasonBadUser) for a wrong user,
 // without evaluating the password at all.
 func TestCredentials_CheckUsername_OnlyUsernamePath(t *testing.T) {
+	t.Parallel()
 	c := NewCredentials("alice", "hunter2")
 
 	ok, reason := c.CheckUsername("alice")
@@ -117,6 +121,7 @@ func TestCredentials_CheckUsername_OnlyUsernamePath(t *testing.T) {
 // constant-time invariant for the publickey auth path: the username check must
 // always run one compare regardless of whether the username matches.
 func TestCredentials_CheckUsername_AlwaysHashes(t *testing.T) {
+	t.Parallel()
 	c := NewCredentials("alice", "hunter2")
 	cases := []struct {
 		name string
@@ -151,8 +156,14 @@ func TestCredentials_CheckUsername_AlwaysHashes(t *testing.T) {
 // each path is within 5x of the other. A real timing leak would show
 // orders of magnitude difference, not 5x.
 func TestCredentials_Check_TimingEnvelope(t *testing.T) {
+	// Intentionally NOT t.Parallel(): this test measures wall-clock duration
+	// of constant-time-compare paths and would flake under CPU contention
+	// from concurrently running sibling tests.
 	if testing.Short() {
 		t.Skip("loose timing assertion; skipped under -short")
+	}
+	if testing.CoverMode() != "" {
+		t.Skip("coverage instrumentation distorts per-statement timing; threshold not meaningful under -cover")
 	}
 	c := NewCredentials("alice", "hunter2")
 	const iters = 2000

@@ -22,6 +22,7 @@ import (
 // password value through every event method and asserts the output
 // contains [REDACTED] in its place — never the literal value.
 func TestIntegration_PasswordNeverAppearsInStructuredEvents(t *testing.T) {
+	t.Parallel()
 	const password = "hunter2-secret"
 	var buf bytes.Buffer
 	l := logging.New(&buf, password, logging.FormatLogfmt)
@@ -51,6 +52,7 @@ func TestIntegration_PasswordNeverAppearsInStructuredEvents(t *testing.T) {
 // one wrong-user and one wrong-password attempt and asserts the captured
 // log contains exactly one of each reason.
 func TestIntegration_AuthFailCarriesCorrectReason(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -87,6 +89,7 @@ func TestIntegration_AuthFailCarriesCorrectReason(t *testing.T) {
 // good auth and one bad auth, then parses the captured lines as JSON and
 // asserts the expected event sequence.
 func TestIntegration_JSONLogCapture(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{
 		logFormat: logging.FormatJSON,
 	})
@@ -174,6 +177,7 @@ func TestIntegration_JSONLogCapture(t *testing.T) {
 // password containing a double-quote and asserts the password never leaks in
 // JSON output, even in its JSON-encoded form.
 func TestIntegration_JSONPasswordScrub_QuoteInPassword(t *testing.T) {
+	t.Parallel()
 	const pw = `"hello"world`
 	ts := startTestServer(t, testServerOptions{
 		password:  pw,

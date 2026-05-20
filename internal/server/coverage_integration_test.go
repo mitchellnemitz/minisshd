@@ -25,6 +25,7 @@ import (
 // branches of session.handleEnv: a pre-spawn LANG accepted, and a
 // post-spawn LANG rejected.
 func TestIntegration_EnvRequestAcceptedAndRejectedAfterStart(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -62,6 +63,7 @@ func TestIntegration_EnvRequestAcceptedAndRejectedAfterStart(t *testing.T) {
 // TestIntegration_WindowChangePreSpawn drives session.handleWindowChange
 // via the pre-spawn path: pty-req, window-change, shell, exit.
 func TestIntegration_WindowChangePreSpawn(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -106,6 +108,7 @@ func TestIntegration_WindowChangePreSpawn(t *testing.T) {
 // is running, exit. With commit 3aef20b's mu-serialized Setsize/Close,
 // this is race-clean under -race.
 func TestIntegration_WindowChangePostSpawn(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -151,6 +154,7 @@ func TestIntegration_WindowChangePostSpawn(t *testing.T) {
 // TestIntegration_SignalRequestSilentlyDropped exercises the §8 signal-
 // drop path (RFC 4254 §6.9, want_reply=false).
 func TestIntegration_SignalRequestSilentlyDropped(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -176,6 +180,7 @@ func TestIntegration_SignalRequestSilentlyDropped(t *testing.T) {
 // TestIntegration_UnknownSubsystemRejected drives the "subsystem
 // anything-other-than-sftp" reject path.
 func TestIntegration_UnknownSubsystemRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -205,6 +210,7 @@ func TestIntegration_UnknownSubsystemRejected(t *testing.T) {
 // TestIntegration_AgentRequestRejected drives the "auth-agent-req@
 // openssh.com" reject path.
 func TestIntegration_AgentRequestRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -233,6 +239,7 @@ func TestIntegration_AgentRequestRejected(t *testing.T) {
 // TestIntegration_StreamlocalChannelRejected drives the streamlocal
 // channel-open reject path.
 func TestIntegration_StreamlocalChannelRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -251,6 +258,7 @@ func TestIntegration_StreamlocalChannelRejected(t *testing.T) {
 // TestIntegration_GlobalTCPIPForwardRejected drives the tcpip-forward
 // global-request reject path.
 func TestIntegration_GlobalTCPIPForwardRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -279,6 +287,7 @@ func TestIntegration_GlobalTCPIPForwardRejected(t *testing.T) {
 // multi-session-per-connection path: a client opens 3 sessions, each
 // runs a short exec.
 func TestIntegration_MultipleConcurrentSessionsOnOneConnection(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -308,6 +317,7 @@ func TestIntegration_MultipleConcurrentSessionsOnOneConnection(t *testing.T) {
 // `reject what=tcpip` per spec §7. The companion `tcpip-forward` is
 // tested in server_integration_test.go.
 func TestIntegration_CancelTCPIPForwardRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -340,6 +350,7 @@ func TestIntegration_CancelTCPIPForwardRejected(t *testing.T) {
 // "sftp-server" alias. Each case must reply false and emit
 // `reject what=subsystem`.
 func TestIntegration_SubsystemCaseVariantsRejected(t *testing.T) {
+	t.Parallel()
 	variants := []string{"SFTP", "Sftp", " sftp", "sftp-server", "sftp\n"}
 	for _, name := range variants {
 		name := name
@@ -388,6 +399,7 @@ func TestIntegration_SubsystemCaseVariantsRejected(t *testing.T) {
 // handleConn completes (conn-close logged); the handshake-error
 // surfacing is informational.
 func TestIntegration_TCPCloseDuringHandshake(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -418,6 +430,7 @@ func TestIntegration_TCPCloseDuringHandshake(t *testing.T) {
 // verify normalizeKey by causing a single auth-fail event and then
 // inspecting the snapshot.
 func TestIntegration_IPv6ClientAddress(t *testing.T) {
+	t.Parallel()
 	// Confirm the kernel has IPv6 enabled by attempting a listener.
 	probe, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {
@@ -475,6 +488,7 @@ func pidStillRunning(pid int) bool {
 // error message), NOT `exit-status`. x/crypto/ssh surfaces this as
 // *ssh.ExitError with a non-empty Signal() string.
 func TestIntegration_ExecKilledBySignalSendsExitSignal(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -519,6 +533,7 @@ func TestIntegration_ExecKilledBySignalSendsExitSignal(t *testing.T) {
 // `shutdown-signal sig=HUP reason=shutdown pgid=…`. Within ~5 s the
 // child is reaped (SIGKILL backstop).
 func TestIntegration_ServerShutdownWhileExecRunning(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 
 	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
@@ -597,6 +612,7 @@ func TestIntegration_ServerShutdownWhileExecRunning(t *testing.T) {
 // the child exits, the server SIGHUPs the process group with reason=
 // channel-close and does NOT send exit-status.
 func TestIntegration_ChannelClosedDuringExec(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -679,6 +695,7 @@ func TestIntegration_ChannelClosedDuringExec(t *testing.T) {
 // one channel" — the first wins; subsequent ones reply with
 // request-failure. The exec should still complete normally.
 func TestIntegration_SecondShellRejectedDuringExec(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -733,6 +750,7 @@ func TestIntegration_SecondShellRejectedDuringExec(t *testing.T) {
 // channel. We provoke the failure by pointing the configured shell at
 // /does/not/exist — exec.Cmd.Start returns ENOENT.
 func TestIntegration_ExecChildStartFails(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{shell: "/does/not/exist/minisshd-no-such-shell"})
 	defer ts.cleanup()
 

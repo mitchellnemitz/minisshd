@@ -72,6 +72,7 @@ func openDirectTCPIP(t *testing.T, cli *ssh.Client, destAddr string, destPort ui
 // back intact. It also asserts the forward-close log event carries
 // bytes_in=64 and bytes_out=64 (matching the echo payload).
 func TestIntegration_DirectTCPIP_EchoRoundTrip(t *testing.T) {
+	t.Parallel()
 	echoAddr := startEchoServer(t)
 	echoTCPAddr, err := net.ResolveTCPAddr("tcp", echoAddr)
 	if err != nil {
@@ -133,6 +134,7 @@ func TestIntegration_DirectTCPIP_EchoRoundTrip(t *testing.T) {
 // port that has no listener. The server must reject the channel with
 // ConnectionFailed and log forward-reject reason=dial-failed.
 func TestIntegration_DirectTCPIP_DialFailure(t *testing.T) {
+	t.Parallel()
 	// Grab a free port, then immediately close the listener so nothing is
 	// actually listening there.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -184,6 +186,7 @@ func TestIntegration_DirectTCPIP_DialFailure(t *testing.T) {
 // with a truncated payload. The server must reject it with ConnectionFailed
 // and log forward-reject reason=malformed-payload.
 func TestIntegration_DirectTCPIP_MalformedPayload(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -212,6 +215,7 @@ func TestIntegration_DirectTCPIP_MalformedPayload(t *testing.T) {
 // forward-reject reason=over-cap. It also verifies that closing one open
 // forward releases the slot so a subsequent open succeeds.
 func TestIntegration_DirectTCPIP_PerConnectionCap(t *testing.T) {
+	t.Parallel()
 	const cap = 2
 	echoAddr := startEchoServer(t)
 	echoHost, _, _ := net.SplitHostPort(echoAddr)
@@ -297,6 +301,7 @@ func TestIntegration_DirectTCPIP_PerConnectionCap(t *testing.T) {
 // the upstream TCP server closes the connection, the SSH channel also reaches
 // EOF (the pipe goroutines propagate the close).
 func TestIntegration_DirectTCPIP_TCPCloseTriggersChannelEOF(t *testing.T) {
+	t.Parallel()
 	// One-shot server: accept, write a line, close.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -341,6 +346,7 @@ func TestIntegration_DirectTCPIP_TCPCloseTriggersChannelEOF(t *testing.T) {
 // when the SSH client closes the channel, the outbound TCP connection also
 // closes (via CloseWrite / Close propagation in the pipe goroutines).
 func TestIntegration_DirectTCPIP_ChannelCloseTriggersTCPClose(t *testing.T) {
+	t.Parallel()
 	// Server that reads until EOF and records what it got.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -389,6 +395,7 @@ func TestIntegration_DirectTCPIP_ChannelCloseTriggersTCPClose(t *testing.T) {
 // ForwardMax is 0 (forwarding disabled), all direct-tcpip channels are
 // rejected with Prohibited and logged as forward-reject reason=over-cap.
 func TestIntegration_DirectTCPIP_RejectedWhenForwardMaxZero(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{disableForwarding: true})
 	defer ts.cleanup()
 

@@ -8,6 +8,7 @@ import (
 var sixDigitRe = regexp.MustCompile(`^\d{6}$`)
 
 func TestGeneratePassword_SixDigits(t *testing.T) {
+	t.Parallel()
 	for i := 0; i < 100; i++ {
 		pw, err := GeneratePassword()
 		if err != nil {
@@ -28,6 +29,7 @@ func TestGeneratePassword_SixDigits(t *testing.T) {
 // few to test strict uniformity reliably). It catches "function always
 // returns 000000" style bugs without becoming flaky.
 func TestGeneratePassword_Distribution(t *testing.T) {
+	t.Parallel()
 	const draws = 5000
 	seen := make(map[string]struct{}, draws)
 	digitInPos := [6][10]bool{}

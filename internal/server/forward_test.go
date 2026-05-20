@@ -20,6 +20,7 @@ func buildDirectTCPIPPayload(destAddr string, destPort uint32, origAddr string, 
 }
 
 func TestParseDirectTCPIP_OK(t *testing.T) {
+	t.Parallel()
 	data := buildDirectTCPIPPayload("127.0.0.1", 80, "1.2.3.4", 12345)
 	p, err := parseDirectTCPIP(data)
 	if err != nil {
@@ -40,6 +41,7 @@ func TestParseDirectTCPIP_OK(t *testing.T) {
 }
 
 func TestParseDirectTCPIP_OK_OriginPortZero(t *testing.T) {
+	t.Parallel()
 	data := buildDirectTCPIPPayload("localhost", 443, "127.0.0.1", 0)
 	_, err := parseDirectTCPIP(data)
 	if err != nil {
@@ -48,6 +50,7 @@ func TestParseDirectTCPIP_OK_OriginPortZero(t *testing.T) {
 }
 
 func TestParseDirectTCPIP_MalformedTruncated(t *testing.T) {
+	t.Parallel()
 	_, err := parseDirectTCPIP([]byte{0, 0, 0, 1})
 	if err == nil {
 		t.Fatal("expected error for truncated payload; got nil")
@@ -55,6 +58,7 @@ func TestParseDirectTCPIP_MalformedTruncated(t *testing.T) {
 }
 
 func TestParseDirectTCPIP_MalformedTrailingGarbage(t *testing.T) {
+	t.Parallel()
 	// Well-formed payload with one extra trailing byte. ssh.Unmarshal is
 	// strict and rejects trailing bytes unconditionally.
 	data := buildDirectTCPIPPayload("127.0.0.1", 80, "1.2.3.4", 12345)
@@ -66,6 +70,7 @@ func TestParseDirectTCPIP_MalformedTrailingGarbage(t *testing.T) {
 }
 
 func TestParseDirectTCPIP_DestPortZero(t *testing.T) {
+	t.Parallel()
 	data := buildDirectTCPIPPayload("127.0.0.1", 0, "1.2.3.4", 12345)
 	_, err := parseDirectTCPIP(data)
 	if err == nil {
@@ -74,6 +79,7 @@ func TestParseDirectTCPIP_DestPortZero(t *testing.T) {
 }
 
 func TestParseDirectTCPIP_DestPortTooLarge(t *testing.T) {
+	t.Parallel()
 	data := buildDirectTCPIPPayload("127.0.0.1", 70000, "1.2.3.4", 12345)
 	_, err := parseDirectTCPIP(data)
 	if err == nil {
@@ -82,6 +88,7 @@ func TestParseDirectTCPIP_DestPortTooLarge(t *testing.T) {
 }
 
 func TestParseDirectTCPIP_EmptyDestHost(t *testing.T) {
+	t.Parallel()
 	// An empty dest host is structurally valid per the parser (port
 	// range is the only structural check after unmarshal). An empty
 	// hostname will surface as a dial-failed when the connection is
@@ -96,6 +103,7 @@ func TestParseDirectTCPIP_EmptyDestHost(t *testing.T) {
 // forwardCounter unit tests
 
 func TestForwardCounter_AcquireUntilCap(t *testing.T) {
+	t.Parallel()
 	c := &forwardCounter{cap: 3}
 	for i := 0; i < 3; i++ {
 		if !c.Acquire() {
@@ -112,6 +120,7 @@ func TestForwardCounter_AcquireUntilCap(t *testing.T) {
 }
 
 func TestForwardCounter_CapZeroDisablesForwarding(t *testing.T) {
+	t.Parallel()
 	c := &forwardCounter{cap: 0}
 	if c.Acquire() {
 		t.Fatal("Acquire with cap=0 should return false")
@@ -119,6 +128,7 @@ func TestForwardCounter_CapZeroDisablesForwarding(t *testing.T) {
 }
 
 func TestForwardCounter_NegativeCapTreatedAsZero(t *testing.T) {
+	t.Parallel()
 	// Negative caps are rejected at startup, but the type allows them.
 	// Acquire must return false defensively.
 	c := &forwardCounter{cap: -5}
@@ -128,6 +138,7 @@ func TestForwardCounter_NegativeCapTreatedAsZero(t *testing.T) {
 }
 
 func TestForwardCounter_RaceFreeUnderConcurrency(t *testing.T) {
+	t.Parallel()
 	const cap = 10
 	const goroutines = 1000
 	c := &forwardCounter{cap: cap}

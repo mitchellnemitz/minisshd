@@ -67,6 +67,7 @@ func newTestServer(t *testing.T, ln net.Listener) *Server {
 }
 
 func TestNewServerConfig_MaxAuthTriesIs6(t *testing.T) {
+	t.Parallel()
 	// Spec §4 mandates MaxAuthTries = 6: password failures, publickey
 	// signature failures, and rejected-key pubkey queries all share a
 	// single combined authFailures counter in golang.org/x/crypto/ssh.
@@ -87,6 +88,7 @@ func TestNewServerConfig_MaxAuthTriesIs6(t *testing.T) {
 }
 
 func TestNewServerConfig_OnlyPasswordAuthOffered(t *testing.T) {
+	t.Parallel()
 	// Spec §4: when Methods is nil/empty (defaults to ["password"]), only
 	// PasswordCallback is set; PublicKeyCallback must be nil.
 	// KeyboardInteractiveCallback and NoClientAuth must be off.
@@ -109,6 +111,7 @@ func TestNewServerConfig_OnlyPasswordAuthOffered(t *testing.T) {
 }
 
 func TestNewServerConfig_PublickeyCallbackSetWhenMethodIncludesPublickey(t *testing.T) {
+	t.Parallel()
 	// When Methods includes publickey and a KeysetSource is provided,
 	// PublicKeyCallback must be set.
 	ln := mustListen(t)
@@ -136,6 +139,7 @@ func TestNewServerConfig_PublickeyCallbackSetWhenMethodIncludesPublickey(t *test
 }
 
 func TestNewServerConfig_ServerVersionSet(t *testing.T) {
+	t.Parallel()
 	// RFC 4253 §4.2 requires the "SSH-2.0-" prefix.
 	ln := mustListen(t)
 	defer ln.Close()
@@ -151,6 +155,7 @@ func TestNewServerConfig_ServerVersionSet(t *testing.T) {
 }
 
 func TestServe_ReturnsWhenContextCancelled(t *testing.T) {
+	t.Parallel()
 	// Spec §8: cancellation stops accepting new conns, drains active
 	// sessions (cap 5 s), and returns nil. With zero in-flight sessions
 	// this should complete promptly.
@@ -178,6 +183,7 @@ func TestServe_ReturnsWhenContextCancelled(t *testing.T) {
 }
 
 func TestServe_LogsHandshakeFailureForBareTCPConnection(t *testing.T) {
+	t.Parallel()
 	// A raw TCP connection that closes before the SSH handshake
 	// completes should not crash the accept loop. The server simply
 	// finishes the per-conn goroutine and continues.

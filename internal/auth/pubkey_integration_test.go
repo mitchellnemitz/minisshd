@@ -16,6 +16,7 @@ import (
 // ssh.MarshalAuthorizedKey (the format produced by ssh-keygen) and asserts
 // the count and fingerprints are correct.
 func TestIntegration_LoadParsesOpenSSHFormat(t *testing.T) {
+	t.Parallel()
 	// Generate two keys and write them in OpenSSH authorized_keys format.
 	keys := make([]ssh.PublicKey, 2)
 	for i := range keys {
@@ -58,6 +59,7 @@ func TestIntegration_LoadParsesOpenSSHFormat(t *testing.T) {
 // overwrites the file with a second key, reloads, and asserts that only the
 // second key is now accepted.
 func TestIntegration_ReloadObservesFileChange(t *testing.T) {
+	t.Parallel()
 	pub1 := generateIntegrationKey(t).PublicKey()
 	pub2 := generateIntegrationKey(t).PublicKey()
 

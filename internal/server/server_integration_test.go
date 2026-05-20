@@ -23,6 +23,7 @@ import (
 // TestIntegration_CorrectCredentialsAllowShell — happy-path interactive
 // shell via pty-req → shell, scripted with `echo hi; exit`.
 func TestIntegration_CorrectCredentialsAllowShell(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -64,6 +65,7 @@ func TestIntegration_CorrectCredentialsAllowShell(t *testing.T) {
 }
 
 func TestIntegration_ExecChannelReturnsExitCode(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -90,6 +92,7 @@ func TestIntegration_ExecChannelReturnsExitCode(t *testing.T) {
 }
 
 func TestIntegration_SFTPRoundTrip1MB(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -143,6 +146,7 @@ func TestIntegration_SFTPRoundTrip1MB(t *testing.T) {
 }
 
 func TestIntegration_TwentyConcurrentExecs(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -214,6 +218,7 @@ func TestIntegration_TwentyConcurrentExecs(t *testing.T) {
 // "reject what=tcpip". direct-tcpip is now handled (it routes to the forward
 // handler), so this test only covers forwarded-tcpip.
 func TestIntegration_RejectsForwardedTCPIP(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -252,6 +257,7 @@ func TestIntegration_RejectsForwardedTCPIP(t *testing.T) {
 }
 
 func TestIntegration_RejectsX11Req(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 

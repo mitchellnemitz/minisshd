@@ -45,6 +45,7 @@ func generateE2EKeypair(t *testing.T, privKeyPath, authKeysPath string) {
 // §13.4 #17: Pubkey auth succeeds — server started with --auth publickey
 // --authorized-keys /path; a client presenting the matching key connects.
 func TestE2E_PubkeyAuthSucceeds(t *testing.T) {
+	t.Parallel()
 	requireSSHClients(t)
 
 	tdir := t.TempDir()
@@ -86,6 +87,7 @@ func TestE2E_PubkeyAuthSucceeds(t *testing.T) {
 // §13.4 #17b: Pubkey auth fails with wrong key — same server config but
 // a different (unregistered) key is presented; the connection is rejected.
 func TestE2E_PubkeyAuthWrongKeyFails(t *testing.T) {
+	t.Parallel()
 	requireSSHClients(t)
 
 	tdir := t.TempDir()
@@ -140,6 +142,7 @@ func TestE2E_PubkeyAuthWrongKeyFails(t *testing.T) {
 // §13.4 #17c: Pubkey auth with both methods — server accepts password AND
 // publickey; a client using the correct key succeeds via method=publickey.
 func TestE2E_PubkeyAuthBothMethodsPubkeyPath(t *testing.T) {
+	t.Parallel()
 	requireSSHClients(t)
 
 	tdir := t.TempDir()

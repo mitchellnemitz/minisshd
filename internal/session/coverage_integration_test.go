@@ -21,6 +21,7 @@ import (
 // exit-signal rather than exit-status. We use `kill -KILL $$` which
 // causes the shell to be SIGKILLed mid-script.
 func TestIntegration_ExecExitSignal(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -60,6 +61,7 @@ func TestIntegration_ExecExitSignal(t *testing.T) {
 // `kill -SEGV $$` causes the shell to deliver SIGSEGV to itself. The
 // server must emit exit-signal with name="SEGV".
 func TestIntegration_ExecExitSignalSegv(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -97,6 +99,7 @@ func TestIntegration_ExecExitSignalSegv(t *testing.T) {
 // session impl's cmd.Wait/io.Copy race doesn't drop the trailing bytes
 // (see FINDINGS in the post-run reply for the proposed impl fix).
 func TestIntegration_BareExecStderrSeparated(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -136,6 +139,7 @@ func TestIntegration_BareExecStderrSeparated(t *testing.T) {
 // successfully, do a small SFTP no-op, then send a stray `exec` request
 // on the same channel and assert reject (reply=false).
 func TestIntegration_SFTPRejectsExtraExecAfterSubsystem(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -192,6 +196,7 @@ func TestIntegration_SFTPRejectsExtraExecAfterSubsystem(t *testing.T) {
 // the process-group leader. We cross-check by reading /proc/$$/stat to
 // see the pgrp matches pid.
 func TestIntegration_ExecPidIsItsOwnPgroup(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -221,6 +226,7 @@ func TestIntegration_ExecPidIsItsOwnPgroup(t *testing.T) {
 // in practice the drain completes in milliseconds for small bursts, so
 // this verifies the happy path of drain (no timeout fired).
 func TestIntegration_DrainBoundedExitsCleanly(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -264,6 +270,7 @@ func tailString(s string, n int) string {
 // branch of handlePtyReq: a too-short pty-req payload must reply false
 // and emit an `error` log event, without taking the channel down.
 func TestIntegration_MalformedPtyReqRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -295,6 +302,7 @@ func TestIntegration_MalformedPtyReqRejected(t *testing.T) {
 // branch of handlePtyReq: a pty-req that arrives after a shell or exec
 // has committed the session must reply false.
 func TestIntegration_PtyReqAfterStartRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -308,7 +316,7 @@ func TestIntegration_PtyReqAfterStartRejected(t *testing.T) {
 	defer ch.Close()
 	go ssh.DiscardRequests(reqs)
 
-	execPayload := ssh.Marshal(&struct{ Command string }{Command: "sleep 1"})
+	execPayload := ssh.Marshal(&struct{ Command string }{Command: "sleep 0.2"})
 	ok, err := ch.SendRequest("exec", true, execPayload)
 	if err != nil {
 		t.Fatalf("exec: %v", err)
@@ -338,14 +346,16 @@ func TestIntegration_PtyReqAfterStartRejected(t *testing.T) {
 	} else if ok2 {
 		t.Fatalf("expected post-start pty-req to be rejected; got reply=true")
 	}
-	drainChannel(ch)
-	time.Sleep(1200 * time.Millisecond)
+	if _, ok := waitChannelClose(ch, 3*time.Second); !ok {
+		t.Fatalf("timed out waiting for child to finish naturally")
+	}
 }
 
 // TestIntegration_PtyReqPayloadVariants drives each error arm of
 // parsePtyReq (and parseWindowChange / parseEnvReq downstream) by
 // sending payloads that fail at successive read positions.
 func TestIntegration_PtyReqPayloadVariants(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -399,6 +409,7 @@ func TestIntegration_PtyReqPayloadVariants(t *testing.T) {
 // branch of handleWindowChange: a window-change request that arrives
 // before any pty-req is silently dropped (no PTY to resize).
 func TestIntegration_WindowChangeWithoutPty(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -442,6 +453,7 @@ func TestIntegration_WindowChangeWithoutPty(t *testing.T) {
 // TestIntegration_WindowChangePayloadVariants drives each error arm of
 // parseWindowChange by sending truncated payloads.
 func TestIntegration_WindowChangePayloadVariants(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -471,6 +483,7 @@ func TestIntegration_WindowChangePayloadVariants(t *testing.T) {
 // TestIntegration_EnvReqMalformedName drives the env "malformed name"
 // branch of parseEnvReq (a payload too short to encode an SSH string).
 func TestIntegration_EnvReqMalformedName(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -495,6 +508,7 @@ func TestIntegration_EnvReqMalformedName(t *testing.T) {
 // TestIntegration_EnvReqMalformedValue drives the env "malformed value"
 // branch: a payload with a valid SSH-string name but a truncated value.
 func TestIntegration_EnvReqMalformedValue(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -522,6 +536,7 @@ func TestIntegration_EnvReqMalformedValue(t *testing.T) {
 // preSpawnDispatch (signal request received before any shell/exec).
 // Per spec §8 the server silently drops it (want_reply=false).
 func TestIntegration_PreSpawnSignalDropped(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -559,6 +574,7 @@ func TestIntegration_PreSpawnSignalDropped(t *testing.T) {
 // arm of preSpawnDispatch: an unrecognized channel request type with
 // want_reply=true must be replied false.
 func TestIntegration_UnknownRequestRejectedPreSpawn(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -584,6 +600,7 @@ func TestIntegration_UnknownRequestRejectedPreSpawn(t *testing.T) {
 // error branch of preSpawnDispatch: a too-short subsystem payload must
 // reply false and log `reject what=subsystem`.
 func TestIntegration_SubsystemMalformedPayload(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -612,6 +629,7 @@ func TestIntegration_SubsystemMalformedPayload(t *testing.T) {
 // of handlePtyReq: once a PTY is allocated, a subsequent pty-req must be
 // rejected (reply false) but the channel remains usable.
 func TestIntegration_DuplicatePtyReqRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -660,6 +678,7 @@ func TestIntegration_DuplicatePtyReqRejected(t *testing.T) {
 // error branch: an exec request with a malformed payload must reply false
 // and emit an `error` log event, without taking the channel down.
 func TestIntegration_MalformedExecPayloadRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -694,11 +713,46 @@ func drainChannel(ch ssh.Channel) {
 	go func() { _, _ = io.Copy(io.Discard, ch.Stderr()) }()
 }
 
+// waitChannelClose drains stdout and stderr until EOF (the server closes
+// the channel after the child exits and exit-status is sent). Returns
+// the collected stdout on EOF, or "" on timeout. Used by post-spawn tests
+// that need a synchronization point on natural child completion rather
+// than a blind fixed sleep.
+func waitChannelClose(ch ssh.Channel, timeout time.Duration) (stdout string, ok bool) {
+	stdoutCh := make(chan string, 1)
+	stderrCh := make(chan struct{})
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, ch)
+		stdoutCh <- buf.String()
+	}()
+	go func() {
+		_, _ = io.Copy(io.Discard, ch.Stderr())
+		close(stderrCh)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	var sawStdout, sawStderr bool
+	for !sawStdout || !sawStderr {
+		select {
+		case s := <-stdoutCh:
+			stdout = s
+			sawStdout = true
+		case <-stderrCh:
+			sawStderr = true
+		case <-timer.C:
+			return stdout, false
+		}
+	}
+	return stdout, true
+}
+
 // TestIntegration_MalformedWindowChangePayloadIgnored drives the
 // parseWindowChange error branch of handleWindowChange: a malformed
 // window-change request (too short payload) is silently ignored. The
 // RFC says want_reply=false, so we don't expect a reply either way.
 func TestIntegration_MalformedWindowChangePayloadIgnored(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -738,6 +792,7 @@ func TestIntegration_MalformedWindowChangePayloadIgnored(t *testing.T) {
 // must be replied false (§8.1 step 4: env negotiation completes before
 // shell/exec).
 func TestIntegration_EnvRequestAfterStartRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -753,7 +808,7 @@ func TestIntegration_EnvRequestAfterStartRejected(t *testing.T) {
 
 	// Start a long-running child so the session stays in the post-spawn
 	// phase while we send the env request.
-	execPayload := ssh.Marshal(&struct{ Command string }{Command: "sleep 1; echo POST_OK"})
+	execPayload := ssh.Marshal(&struct{ Command string }{Command: "sleep 0.2; echo POST_OK"})
 	ok, err := ch.SendRequest("exec", true, execPayload)
 	if err != nil {
 		t.Fatalf("exec: %v", err)
@@ -771,8 +826,13 @@ func TestIntegration_EnvRequestAfterStartRejected(t *testing.T) {
 	} else if ok2 {
 		t.Fatalf("expected post-spawn env to be rejected (got reply=true)")
 	}
-	drainChannel(ch)
-	time.Sleep(1200 * time.Millisecond)
+	out, closed := waitChannelClose(ch, 3*time.Second)
+	if !closed {
+		t.Fatalf("timed out waiting for child to finish naturally; partial stdout=%q", out)
+	}
+	if !strings.Contains(out, "POST_OK") {
+		t.Fatalf("child output missing POST_OK (stray env must not disturb child); got %q", out)
+	}
 }
 
 // TestIntegration_SecondShellAfterStartRejected drives the
@@ -780,6 +840,7 @@ func TestIntegration_EnvRequestAfterStartRejected(t *testing.T) {
 // is running, a second shell or exec request must be denied (reply false)
 // without disturbing the running child.
 func TestIntegration_SecondShellAfterStartRejected(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -794,7 +855,7 @@ func TestIntegration_SecondShellAfterStartRejected(t *testing.T) {
 	go ssh.DiscardRequests(reqs)
 
 	// Start a long-running exec.
-	execPayload := ssh.Marshal(&struct{ Command string }{Command: "sleep 1; echo POST_OK"})
+	execPayload := ssh.Marshal(&struct{ Command string }{Command: "sleep 0.2; echo POST_OK"})
 	ok, err := ch.SendRequest("exec", true, execPayload)
 	if err != nil {
 		t.Fatalf("exec: %v", err)
@@ -821,8 +882,13 @@ func TestIntegration_SecondShellAfterStartRejected(t *testing.T) {
 			t.Errorf("expected second %s to be rejected, got reply=true", kind)
 		}
 	}
-	drainChannel(ch)
-	time.Sleep(1200 * time.Millisecond)
+	out, closed := waitChannelClose(ch, 3*time.Second)
+	if !closed {
+		t.Fatalf("timed out waiting for child to finish naturally; partial stdout=%q", out)
+	}
+	if !strings.Contains(out, "POST_OK") {
+		t.Fatalf("child output missing POST_OK (stray shell/exec/subsystem must not disturb child); got %q", out)
+	}
 }
 
 // TestIntegration_PostSpawnSignalDropped drives the `signal` arm of
@@ -830,6 +896,7 @@ func TestIntegration_SecondShellAfterStartRejected(t *testing.T) {
 // RFC default) must be silently dropped without affecting the running
 // child. We confirm the child still emits its output after the signal.
 func TestIntegration_PostSpawnSignalDropped(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -861,6 +928,7 @@ func TestIntegration_PostSpawnSignalDropped(t *testing.T) {
 // branch of handleEnv: a malformed env request payload must still reply
 // true (so clients can't probe), without affecting the channel.
 func TestIntegration_HandleEnvMalformedPayload(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -903,6 +971,7 @@ func TestIntegration_HandleEnvMalformedPayload(t *testing.T) {
 //
 // This test takes ~5 seconds; in -short mode it is skipped.
 func TestIntegration_ChannelCloseEscalatesToKill(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("skipping 5s shutdownGrace escalation test in -short mode")
 	}
@@ -948,6 +1017,7 @@ func TestIntegration_ChannelCloseEscalatesToKill(t *testing.T) {
 // The runSftp select must take the `<-ctx.Done()` arm, close the channel
 // to force the handler to return, and clean up.
 func TestIntegration_SFTPCtxCancelDuringActiveSession(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 
 	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
@@ -984,6 +1054,7 @@ func TestIntegration_SFTPCtxCancelDuringActiveSession(t *testing.T) {
 // closes the channel without ever sending shell/exec/subsystem. The
 // server must release the allocated PTY pair without leaking FDs.
 func TestIntegration_ChannelClosedBeforeStartReleasesPty(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 
@@ -1029,6 +1100,7 @@ func TestIntegration_ChannelClosedBeforeStartReleasesPty(t *testing.T) {
 // cancelling (i.e. graceful shutdown). The server must SIGHUP the child,
 // log shutdown-signal, and tear down cleanly.
 func TestIntegration_ServerShutdownDuringExec(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 
 	cli := dialSSH(t, ts.addr, clientConfig(ts.user, ts.password))
@@ -1061,6 +1133,7 @@ func TestIntegration_ServerShutdownDuringExec(t *testing.T) {
 // Spec §8 Signal handling. We verify by looking for the shutdown-signal
 // log event with reason=channel-close.
 func TestIntegration_ChannelCloseTriggersChildSighup(t *testing.T) {
+	t.Parallel()
 	ts := startTestServer(t, testServerOptions{})
 	defer ts.cleanup()
 

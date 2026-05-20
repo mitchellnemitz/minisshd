@@ -46,12 +46,16 @@ type Server struct {
 // validity of every Config field. The returned Server is inert until
 // Serve is invoked.
 func New(cfg Config) *Server {
+	sleep := cfg.Sleep
+	if sleep == nil {
+		sleep = time.Sleep
+	}
 	return &Server{
 		cfg:     cfg,
 		limiter: cfg.Limiter,
 		creds:   cfg.Credentials,
 		session: cfg.SessionService,
-		sleep:   time.Sleep,
+		sleep:   sleep,
 	}
 }
 
@@ -157,9 +161,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		sessionsWG.Wait()
 		close(connsDone)
 	}()
+	drain := s.cfg.DrainTimeout
+	if drain == 0 {
+		drain = drainTimeout
+	}
 	select {
 	case <-connsDone:
-	case <-time.After(drainTimeout):
+	case <-time.After(drain):
 	}
 
 	// Wait for the shutdown watcher to exit cleanly. If ctx was never

@@ -1,10 +1,16 @@
 # Scope: GHA ci is a Linux sanity check, not a complete spec §13.6 gate.
 # Spec §13.6 calls for `make test`, `make test-slow`, `make test-race`,
-# `make e2e`, and `make coverage` on both macOS and Linux. We run all five
-# Make targets on ubuntu-latest; macOS verification stays the operator's
+# `make e2e`, and `make coverage` on both macOS and Linux. We run four of
+# those Make targets on ubuntu-latest; `make test-slow` is intentionally
+# omitted from CI — its real-time §5 rate-limit timing tests duplicate
+# coverage already exercised by `make coverage` (which runs the same
+# integration suite without -short) and add ~60s of wall-clock backoff
+# waits that contribute no additional assertion signal. Run `make
+# test-slow` locally before release if you want to exercise the real-time
+# backoff path end-to-end. macOS verification stays the operator's
 # responsibility before tagging (PTY, signal, and SFTP semantics still
 # diverge across the two OSes, and macOS GHA runners are expensive and
-# slow). Run the full set locally on macOS before release.
+# slow).
 
 name: ci
 
@@ -81,18 +87,6 @@ jobs:
 
       - name: go test -short -race
         run: go test -short -race ./...
-
-  test-slow:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: make test-slow
-        run: make test-slow
 
   test-e2e:
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 # JSON log format — implementation plan
 
-Spec: `docs/specs/00-minisshd-spec.md` (§9, §12)
+Spec: `SPEC.md` (§9, §12)
 Feature flag: `--log-format` / `MINISSHD_LOG_FORMAT`
 Date: 2026-05-19
 
@@ -84,7 +84,7 @@ mirrors every existing logfmt test in JSON with byte-identical event coverage.
 
 ## Spec amendments
 
-Two sections of `docs/specs/00-minisshd-spec.md` change. The plan does **not**
+Two sections of `SPEC.md` change. The plan does **not**
 modify the spec — these are the exact proposed edits for the implementation
 pass.
 
@@ -1022,7 +1022,7 @@ are added; `internal/version` remains the sole exclusion.
 
 A reviewer can mark this feature done when **all** of the following hold:
 
-1. **Spec amended.** `docs/specs/00-minisshd-spec.md` §9 reflects the
+1. **Spec amended.** `SPEC.md` §9 reflects the
    format selector, the JSON wire format, the dual-scrub invariant, and the
    banner exception. §12 no longer lists "structured JSON output" as a
    non-goal. §2 lists the new flag and env var. §11 lists the new error
@@ -1156,7 +1156,7 @@ A reviewer can mark this feature done when **all** of the following hold:
 6. **Spec-vs-code drift if the plan is implemented but the spec amendment
    is dropped.** The implementation pass must land both. CLAUDE.md is
    explicit that the spec is the contract. Reviewer checks: did
-   `docs/specs/00-minisshd-spec.md` change in the same PR as the code? If
+   `SPEC.md` change in the same PR as the code? If
    not, request the spec amendment.
 
 ---

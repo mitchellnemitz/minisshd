@@ -143,7 +143,7 @@ correct. No code changes are required.
 
 ## Spec change set
 
-All changes are in `docs/specs/00-minisshd-spec.md`.
+All changes are in `SPEC.md`.
 
 | # | Section | Change |
 |---|---|---|
@@ -173,7 +173,7 @@ CPU-bound.
 
 ## Definition of done
 
-- [ ] All 9 spec edits applied to `docs/specs/00-minisshd-spec.md`
+- [ ] All 9 spec edits applied to `SPEC.md`
 - [ ] D-09 disposition confirmed (SPEC UPDATE or CODE UPDATE) and applied
 - [ ] `gofmt -l .` prints nothing (no Go files changed, so this is trivially satisfied)
 - [ ] `go vet ./...` clean (no Go files changed)

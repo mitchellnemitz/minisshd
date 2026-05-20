@@ -2,7 +2,7 @@
 
 A minimal, single-user SSH server for macOS and Linux. Listens on a TCP port, authenticates one user with a password (auto-generated 6-digit if none is configured), and supports interactive shell, one-off `exec`, and SFTP — enough for the system `ssh`, `sftp`, and `scp` clients to work unmodified.
 
-The full contract lives in [`docs/specs/00-minisshd-spec.md`](./docs/specs/00-minisshd-spec.md). **This server is not meant to face the public internet.** No code-level check enforces that — it's the operator's responsibility.
+The full contract lives in [`SPEC.md`](./SPEC.md). **This server is not meant to face the public internet.** No code-level check enforces that — it's the operator's responsibility.
 
 ## Usage
 

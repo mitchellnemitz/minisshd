@@ -1,7 +1,7 @@
 # Plan: Daemonization / auto-start examples (docs-only)
 
 Date: 2026-05-19
-Scope: docs/examples/, plus a small amendment to docs/specs/00-minisshd-spec.md.
+Scope: docs/examples/, plus a small amendment to SPEC.md.
 Out of scope: any change to .go files, the test suite, the coverage threshold, or the binary's behavior.
 
 ## Changelog (iter 3 → iter 4)
@@ -56,7 +56,7 @@ Deliverables (and nothing else):
 1. `docs/examples/com.example.minisshd.plist` — macOS LaunchAgent template.
 2. `docs/examples/minisshd.service` — systemd `--user` unit template.
 3. `docs/examples/README.md` — install/uninstall/logs/warnings.
-4. Edits to `docs/specs/00-minisshd-spec.md` (§10 file-layout note, §12
+4. Edits to `SPEC.md` (§10 file-layout note, §12
    non-goal rewording).
 5. A short pointer from the repo-root `README.md` to `docs/examples/`.
 
@@ -65,7 +65,7 @@ threshold, and `make` targets are unaffected by definition.
 
 ## Spec amendments
 
-Two surgical edits to `docs/specs/00-minisshd-spec.md`. The wording below is
+Two surgical edits to `SPEC.md`. The wording below is
 the exact replacement text; the implementation pass must apply these verbatim.
 
 ### §12 — replace the existing "Daemonization or auto-start at login" bullet
@@ -573,7 +573,7 @@ The implementing pass is done when ALL of the following hold:
 1. `docs/examples/` exists and contains exactly three files:
    `README.md`, `com.example.minisshd.plist`, `minisshd.service`. No other
    files (no Makefile target, no install script, no fixture).
-2. `docs/specs/00-minisshd-spec.md` contains the two amendments described
+2. `SPEC.md` contains the two amendments described
    above (§10 note and §12 reworded bullet), and no other section is
    touched.
 3. The repo-root `README.md` gains a pointer in an appropriate place

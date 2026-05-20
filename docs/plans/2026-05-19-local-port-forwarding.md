@@ -30,7 +30,7 @@ Applied in response to adversarial review round 1:
 - **MINOR-10 (E2E #8 sync):** Replaced the `awaitPort` sync (which only works for `-L`) in the revised #8 test with a log-based sync: wait for `auth-ok` in the server log before asserting the rejection.
 
 Date: 2026-05-19
-Spec file: `docs/specs/00-minisshd-spec.md`
+Spec file: `SPEC.md`
 Scope: implement server-side local port forwarding (`direct-tcpip`) end-to-end, leaving reverse forwarding (`tcpip-forward`/`forwarded-tcpip`), streamlocal, agent forwarding, and X11 untouched.
 
 ## 1. Summary
@@ -41,7 +41,7 @@ The change touches spec §7 (move `direct-tcpip` from the reject list to a new a
 
 ## 2. Spec amendments
 
-All edits land in `docs/specs/00-minisshd-spec.md`. Exact wording follows.
+All edits land in `SPEC.md`. Exact wording follows.
 
 ### 2.1 §7 — table addition and rejection-list trim
 
@@ -952,7 +952,7 @@ A user running pinned to a particular log line format would need to update if th
 
 The following must all hold before merging:
 
-1. Spec edits in §2.1–§2.9 of this plan are applied to `docs/specs/00-minisshd-spec.md`. The plan's exact wording is copied verbatim into the spec.
+1. Spec edits in §2.1–§2.9 of this plan are applied to `SPEC.md`. The plan's exact wording is copied verbatim into the spec.
 2. `gofmt -l .` prints nothing.
 3. `go vet ./...` passes.
 4. `go mod tidy` leaves `go.mod` / `go.sum` unchanged (i.e. tidy was run after every import edit).

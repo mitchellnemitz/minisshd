@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## The spec is the contract
 
-`docs/specs/00-minisshd-spec.md` is the authoritative contract for this server. **Read it before writing or modifying code, and do not deviate.** Section numbers (e.g. "§5", "§13.5") referenced in code comments, commit messages, and this file point into that document. When in doubt, the spec wins over inference from existing code.
+`SPEC.md` is the authoritative contract for this server. **Read it before writing or modifying code, and do not deviate.** Section numbers (e.g. "§5", "§13.5") referenced in code comments, commit messages, and this file point into that document. When in doubt, the spec wins over inference from existing code.
 
 ## Commands
 

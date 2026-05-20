@@ -346,7 +346,7 @@ A session channel may receive `pty-req`, `env`, `shell`, `exec`, and `subsystem`
 |---|---|
 | `pty-req` → `shell` | Interactive PTY shell, full rc-chain loaded. See §8.1. |
 | `shell` (no prior `pty-req`) | Spawn the shell *without* a PTY using the hyphen-prefix `argv[0]` (login but not interactive). zsh loads `.zshenv`, `.zprofile`, `.zlogin` but **not** `.zshrc`. Channel ↔ stdio is piped instead of through a PTY. Treated like §8.1 but without PTY allocation. |
-| `pty-req` → `exec CMD` | The PTY is allocated and `<shell> -c CMD` runs attached to it. `argv[0]` is still bare (no hyphen prefix), so the shell is interactive (PTY) but not a login shell. zsh loads `.zshenv` and `.zshrc` but not `.zprofile`. Behavior matches `ssh -t host CMD` in OpenSSH. |
+| `pty-req` → `exec CMD` | The PTY is allocated and `<shell> -i -c CMD` runs attached to it. `argv[0]` is still bare (no hyphen prefix), so the shell is interactive (PTY) but not a login shell. The `-i` flag is required because zsh/bash do not auto-derive interactivity from a TTY when invoked with `-c`. zsh loads `.zshenv` and `.zshrc` but not `.zprofile`. Behavior matches the user expectation for `ssh -t host CMD`. |
 | `exec CMD` (no prior `pty-req`) | Non-interactive, non-login. See §8.2. |
 | `subsystem sftp` | See §8 SFTP. |
 | `subsystem` (anything else) | Rejected per §7. |
@@ -374,7 +374,7 @@ A session channel may receive `pty-req`, `env`, `shell`, `exec`, and `subsystem`
 
 ### Exec (one-off commands)
 
-1. On `exec`, spawn `<shell> -c <command>` **without** the hyphen-prefix `argv[0]`. Whether a PTY is attached depends on whether a `pty-req` preceded the `exec` (per the §8 request-type combinations table):
+1. On `exec`, spawn the shell **without** the hyphen-prefix `argv[0]`. Bare exec uses `<shell> -c <command>`; exec-with-PTY uses `<shell> -i -c <command>` so the shell is actually interactive (zsh/bash treat `-c` as non-interactive by default even with TTY stdin — the `-i` flag is what loads `.zshrc`). Whether a PTY is attached depends on whether a `pty-req` preceded the `exec` (per the §8 request-type combinations table):
    - **Bare exec (no `pty-req`):** the child is neither a login shell nor an interactive shell. **None of the shell's rc files load** — not `.zshrc` (interactive-only), not `.zprofile` or `.zlogin` (login-only). Only `.zshenv`/`/etc/zshenv` load for zsh. This matches OpenSSH's behavior. The practical consequence: commands installed only via `.zshrc` (e.g. Homebrew on `/opt/homebrew/bin` if it's not also in `.zshenv` or the system PATH) will not be found by `ssh host CMD`. Users who need the full environment can wrap explicitly: `ssh host 'zsh -lic "CMD"'`. The server does not paper over this.
    - **Exec with PTY (`ssh -t host CMD`):** stdin/stderr are TTYs so the shell is interactive but not a login shell. zsh loads `.zshenv` and `.zshrc` but not `.zprofile`/`.zlogin`.
 2. Wire stdio:

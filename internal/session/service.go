@@ -213,10 +213,17 @@ func (s *Service) prepareShell(st *sessionState) *exec.Cmd {
 }
 
 // prepareExec builds the *exec.Cmd for an `exec` request per spec §8.2.
-// argv[0] is bare (no hyphen prefix); the shell receives `-c <command>`.
+// argv[0] is bare (no hyphen prefix). With a PTY allocated, `-i` is added
+// so the shell is interactive (zsh would not auto-detect interactivity
+// under `-c` from TTY stdin alone) — this is what makes §8.2's "exec with
+// PTY loads .zshrc" claim hold for zsh/bash.
 func (s *Service) prepareExec(st *sessionState, command string) *exec.Cmd {
-	cmd := exec.Command(s.Shell, "-c", command)
-	cmd.Args = []string{filepath.Base(s.Shell), "-c", command}
+	args := []string{"-c", command}
+	if st.pty != nil {
+		args = []string{"-i", "-c", command}
+	}
+	cmd := exec.Command(s.Shell, args...)
+	cmd.Args = append([]string{filepath.Base(s.Shell)}, args...)
 	cmd.Env = s.buildEnv(st)
 	return cmd
 }
